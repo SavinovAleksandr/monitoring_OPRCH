@@ -160,7 +160,7 @@ EH:
     MsgBox "Ошибка AnalyzeOPRCH: " & Err.Description, vbCritical
 End Sub
 
-Private Function AnalyzeOneGenerator(ByVal wsRaw As Worksheet, ByVal st As TSettings, ByVal g As TGenCfg) As TGenResult
+Private Function AnalyzeOneGenerator(ByVal wsRaw As Worksheet, ByRef st As TSettings, ByRef g As TGenCfg) As TGenResult
     Dim res As TGenResult
     Dim timeCol As Long, pCol As Long, fCol As Long
     Dim startRow As Long, endQ As Long
@@ -215,7 +215,7 @@ Private Function AnalyzeOneGenerator(ByVal wsRaw As Worksheet, ByVal st As TSett
     AnalyzeOneGenerator = res
 End Function
 
-Private Sub EvaluateQualitative(ByVal wsRaw As Worksheet, ByVal st As TSettings, ByVal g As TGenCfg, ByRef res As TGenResult, _
+Private Sub EvaluateQualitative(ByVal wsRaw As Worksheet, ByRef st As TSettings, ByRef g As TGenCfg, ByRef res As TGenResult, _
                                 ByVal pCol As Long, ByVal fCol As Long, ByVal timeCol As Long)
     Dim signReq As Integer, t5 As Double, t10 As Double
     Dim r As Long, endRow As Long, dP As Double, target5 As Double, target10 As Double
@@ -281,7 +281,7 @@ Private Sub EvaluateQualitative(ByVal wsRaw As Worksheet, ByVal st As TSettings,
     End If
 End Sub
 
-Private Sub WriteGeneratorSheet(ByVal wsRaw As Worksheet, ByVal st As TSettings, ByVal g As TGenCfg, ByVal res As TGenResult)
+Private Sub WriteGeneratorSheet(ByVal wsRaw As Worksheet, ByRef st As TSettings, ByRef g As TGenCfg, ByRef res As TGenResult)
     Dim ws As Worksheet
     Dim shName As String
     Dim timeCol As Long, pCol As Long, fCol As Long
@@ -352,7 +352,7 @@ Private Sub WriteGeneratorSheet(ByVal wsRaw As Worksheet, ByVal st As TSettings,
     ws.Range("B:F").NumberFormat = "0.000"
 End Sub
 
-Private Sub BuildStationAggregates(ByVal wsRaw As Worksheet, ByVal wsCfg As Worksheet, ByVal wsSummary As Worksheet, ByVal st As TSettings)
+Private Sub BuildStationAggregates(ByVal wsRaw As Worksheet, ByVal wsCfg As Worksheet, ByVal wsSummary As Worksheet, ByRef st As TSettings)
     Dim stations As Variant, s As Variant
     stations = Array("Сосногорская ТЭЦ", "Воркутинская ТЭЦ", "СЛПК")
     For Each s In stations
@@ -360,7 +360,7 @@ Private Sub BuildStationAggregates(ByVal wsRaw As Worksheet, ByVal wsCfg As Work
     Next s
 End Sub
 
-Private Sub BuildOneStationAggregate(ByVal wsRaw As Worksheet, ByVal wsCfg As Worksheet, ByVal stationName As String, ByVal st As TSettings)
+Private Sub BuildOneStationAggregate(ByVal wsRaw As Worksheet, ByVal wsCfg As Worksheet, ByVal stationName As String, ByRef st As TSettings)
     Dim cfgLast As Long, r As Long, cnt As Long
     Dim g As TGenCfg
     Dim pCols() As Long, fnchArr() As Double, sArr() As Double, kdArr() As Double, pnomArr() As Double
@@ -478,7 +478,7 @@ NextCfg:
     ws.Range("A:A").NumberFormat = "dd.mm.yyyy hh:mm:ss"
 End Sub
 
-Private Sub WriteSummaryRow(ByVal ws As Worksheet, ByVal r As Long, ByVal g As TGenCfg, ByVal res As TGenResult)
+Private Sub WriteSummaryRow(ByVal ws As Worksheet, ByVal r As Long, ByRef g As TGenCfg, ByRef res As TGenResult)
     Dim note As String
     note = ""
     If Not res.QuantPass Then note = "Колич. критерий не выполнен"
@@ -529,13 +529,13 @@ Private Function ReadGenCfg(ByVal ws As Worksheet, ByVal r As Long) As TGenCfg
     ReadGenCfg = g
 End Function
 
-Private Function ValidateGenCfg(ByVal g As TGenCfg) As Boolean
+Private Function ValidateGenCfg(ByRef g As TGenCfg) As Boolean
     ValidateGenCfg = (Len(g.Station) > 0 And Len(g.Generator) > 0 And Len(g.PowerHeader) > 0 And Len(g.FreqHeader) > 0 _
                       And g.PNom > 0 And g.SPct > 0 And g.Fnch >= 0 And g.Kd > 0)
 End Function
 
 Private Function ResolveStartRow(ByVal wsRaw As Worksheet, ByVal timeCol As Long, ByVal freqCol As Long, _
-                                 ByVal st As TSettings, ByVal fnch As Double) As Long
+                                 ByRef st As TSettings, ByVal fnch As Double) As Long
     Dim lastR As Long, r As Long
     Dim prevAbs As Double, curAbs As Double
     Dim bestRow As Long, bestAbs As Double, val As Double, t As Date, dt As Double
