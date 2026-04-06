@@ -66,35 +66,35 @@ Public Sub SetupOPRCHTemplate()
     wsCfg.Cells.Clear
     wsSum.Cells.Clear
 
-    wsRaw.Range("A1").Value = "Р’СЂРµРјСЏ"
-    wsRaw.Range("B1").Value = "Р§Р°СЃС‚РѕС‚Р°"
-    wsRaw.Range("C1").Value = "РўР“-1"
-    wsRaw.Range("D1").Value = "РўР“-2"
-    wsRaw.Range("E1").Value = "РўР“-3"
+    wsRaw.Range("A1").Value = "Время"
+    wsRaw.Range("B1").Value = "Частота"
+    wsRaw.Range("C1").Value = "ТГ-1"
+    wsRaw.Range("D1").Value = "ТГ-2"
+    wsRaw.Range("E1").Value = "ТГ-3"
 
     wsCfg.Range("A1:Q1").Value = Array( _
-        "РЎС‚Р°РЅС†РёСЏ", "Р“РµРЅРµСЂР°С‚РѕСЂ", "РљРѕР»РѕРЅРєР°_РјРѕС‰РЅРѕСЃС‚Рё", "РљРѕР»РѕРЅРєР°_С‡Р°СЃС‚РѕС‚С‹", "РўРёРї_РѕР±РѕСЂСѓРґРѕРІР°РЅРёСЏ", _
-        "PРЅРѕРј, РњР’С‚", "S, %", "fРЅС‡, Р“С†", "KРґ", "Р’РєР» (1/0)", "РљР°С‡_РІРєР» (1/0)", _
-        "t5, c", "dP5, %PРЅРѕРј", "t10, c", "dP10, %PРЅРѕРј", "РЈСЃС‚_РґРѕРїСѓСЃРє, %PРЅРѕРј", "Р’ СЃСѓРјРјСѓ СЃС‚Р°РЅС†РёРё (1/0)" _
+        "Станция", "Генератор", "Колонка_мощности", "Колонка_частоты", "Тип_оборудования", _
+        "Pном, МВт", "S, %", "fнч, Гц", "Kд", "Вкл (1/0)", "Кач_вкл (1/0)", _
+        "t5, c", "dP5, %Pном", "t10, c", "dP10, %Pном", "Уст_допуск, %Pном", "В сумму станции (1/0)" _
     )
 
-    wsCfg.Cells(2, 1).Resize(1, 17).Value = Array("РЎРѕСЃРЅРѕРіРѕСЂСЃРєР°СЏ РўР­Р¦", "РўР“-5", "РўР“-5", "Р§Р°СЃС‚РѕС‚Р°", "РџРўРЈ", 55, 4.2, 0.105, 0.5, 1, 1, 15, 5, 420, 10, 1, 1)
-    wsCfg.Cells(3, 1).Resize(1, 17).Value = Array("РЎРѕСЃРЅРѕРіРѕСЂСЃРєР°СЏ РўР­Р¦", "РўР“-7", "РўР“-7", "Р§Р°СЃС‚РѕС‚Р°", "РџРўРЈ", 60, 4.5, 0.11, 0.5, 1, 1, 15, 5, 420, 10, 1, 1)
-    wsCfg.Cells(4, 1).Resize(1, 17).Value = Array("РЎР›РџРљ", "РўР“-2Р­", "РўР“-2Р­", "f РЎР›РџРљ", "РџР“РЈ_СѓС‚РёР»РёР·", 50, 4.5, 0.1, 0.5, 1, 1, 15, 5, 300, 10, 1, 1)
+    wsCfg.Cells(2, 1).Resize(1, 17).Value = Array("Сосногорская ТЭЦ", "ТГ-5", "ТГ-5", "Частота", "ПТУ", 55, 4.2, 0.105, 0.5, 1, 1, 15, 5, 420, 10, 1, 1)
+    wsCfg.Cells(3, 1).Resize(1, 17).Value = Array("Сосногорская ТЭЦ", "ТГ-7", "ТГ-7", "Частота", "ПТУ", 60, 4.5, 0.11, 0.5, 1, 1, 15, 5, 420, 10, 1, 1)
+    wsCfg.Cells(4, 1).Resize(1, 17).Value = Array("СЛПК", "ТГ-2Э", "ТГ-2Э", "f СЛПК", "ПГУ_утилиз", 50, 4.5, 0.1, 0.5, 1, 1, 15, 5, 300, 10, 1, 1)
 
-    wsCfg.Range("S1").Value = "Р“Р»РѕР±Р°Р»СЊРЅС‹Рµ РЅР°СЃС‚СЂРѕР№РєРё"
-    wsCfg.Cells(2, 18).Resize(1, 2).Value = Array("fРЅРѕРј, Р“С†", 50)
-    wsCfg.Cells(3, 18).Resize(1, 2).Value = Array("Р’СЂРµРјСЏ РЅР°С‡Р°Р»Р° СЃРѕР±С‹С‚РёСЏ", "")
-    wsCfg.Cells(4, 18).Resize(1, 2).Value = Array("РђРІС‚РѕРїРѕРёСЃРє СЃС‚Р°СЂС‚Р° (1/0)", 1)
-    wsCfg.Cells(5, 18).Resize(1, 2).Value = Array("РљРѕР»РёС‡. РёРЅС‚РµСЂРІР°Р», СЃ", 82)
-    wsCfg.Cells(6, 18).Resize(1, 2).Value = Array("Р”РѕРїСѓСЃРє РєРѕР»РёС‡РµСЃС‚РІ., %", 10)
-    wsCfg.Cells(7, 18).Resize(1, 2).Value = Array("РџРѕСЂРѕРі РІРєР»СЋС‡РµРЅРёСЏ РІ СЂР°Р±РѕС‚Сѓ, РњР’С‚", 1)
+    wsCfg.Range("S1").Value = "Глобальные настройки"
+    wsCfg.Cells(2, 18).Resize(1, 2).Value = Array("fном, Гц", 50)
+    wsCfg.Cells(3, 18).Resize(1, 2).Value = Array("Время начала события", "")
+    wsCfg.Cells(4, 18).Resize(1, 2).Value = Array("Автопоиск старта (1/0)", 1)
+    wsCfg.Cells(5, 18).Resize(1, 2).Value = Array("Колич. интервал, с", 82)
+    wsCfg.Cells(6, 18).Resize(1, 2).Value = Array("Допуск количеств., %", 10)
+    wsCfg.Cells(7, 18).Resize(1, 2).Value = Array("Порог включения в работу, МВт", 1)
 
     wsCfg.Columns("A:T").AutoFit
     wsRaw.Columns("A:E").AutoFit
     EnsureRunButton wsCfg
 
-    MsgBox "РЁР°Р±Р»РѕРЅ СЃРѕР·РґР°РЅ. Р—Р°РїРѕР»РЅРёС‚Рµ RawData/Config Рё РЅР°Р¶РјРёС‚Рµ РєРЅРѕРїРєСѓ 'Р—Р°РїСѓСЃС‚РёС‚СЊ РјРѕРЅРёС‚РѕСЂРёРЅРі РћРџР Р§' РЅР° Р»РёСЃС‚Рµ Config.", vbInformation
+    MsgBox "Шаблон создан. Заполните RawData/Config и нажмите кнопку 'Запустить мониторинг ОПРЧ' на листе Config.", vbInformation
 End Sub
 
 Public Sub AnalyzeOPRCH()
@@ -111,11 +111,11 @@ Public Sub AnalyzeOPRCH()
     Set wsSummary = EnsureSheet(SH_SUM)
 
     st = ReadSettings(wsCfg)
-    timeCol = FindHeaderCol(wsRaw, "Р’СЂРµРјСЏ")
-    If timeCol = 0 Then Err.Raise vbObjectError + 2001, , "Р’ RawData РЅРµ РЅР°Р№РґРµРЅР° РєРѕР»РѕРЅРєР° 'Р’СЂРµРјСЏ'."
+    timeCol = FindHeaderCol(wsRaw, "Время")
+    If timeCol = 0 Then Err.Raise vbObjectError + 2001, , "В RawData не найдена колонка 'Время'."
 
     cfgLast = LastUsedRow(wsCfg)
-    If cfgLast < 2 Then Err.Raise vbObjectError + 2002, , "Р’ Config РЅРµС‚ СЃС‚СЂРѕРє РіРµРЅРµСЂР°С‚РѕСЂРѕРІ."
+    If cfgLast < 2 Then Err.Raise vbObjectError + 2002, , "В Config нет строк генераторов."
 
     Set targetSheets = New Collection
     CollectOldOutputSheets targetSheets
@@ -123,8 +123,8 @@ Public Sub AnalyzeOPRCH()
 
     wsSummary.Cells.Clear
     wsSummary.Range("A1:Q1").Value = Array( _
-        "РЎС‚Р°РЅС†РёСЏ", "Р“РµРЅРµСЂР°С‚РѕСЂ", "РўРёРї", "РЎС‚Р°СЂС‚", "P0, РњР’С‚", "PС‚РµРє, РњР’С‚", "О”f, Р“С†", "О”fСЂ, Р“С†", _
-        "PС‚СЂРµР±, РњР’С‚", "PС„Р°РєС‚, РњР’С‚", "РљРѕР»РёС‡. %", "РљРѕР»РёС‡. СЃС‚Р°С‚СѓСЃ", "РљР°С‡. СЃС‚Р°С‚СѓСЃ", "t5 С„Р°РєС‚, c", "t10 С„Р°РєС‚, c", "Р›РёСЃС‚", "РџСЂРёРјРµС‡Р°РЅРёРµ" _
+        "Станция", "Генератор", "Тип", "Старт", "P0, МВт", "Pтек, МВт", "dF, Гц", "dFr, Гц", _
+        "Pтреб, МВт", "Pфакт, МВт", "Колич. %", "Колич. статус", "Кач. статус", "t5 факт, c", "t10 факт, c", "Лист", "Примечание" _
     )
     outRow = 2
 
@@ -135,7 +135,7 @@ Public Sub AnalyzeOPRCH()
         If Not g.Enabled Then GoTo NextGen
 
         If Not ValidateGenCfg(g) Then
-            wsSummary.Cells(outRow, 1).Resize(1, 17).Value = Array(g.Station, g.Generator, g.EquipType, "", "", "", "", "", "", "", "", "РќР°СЂСѓС€РµРЅРёРµ", "Рќ/Р”", "", "", "", "РќРµ Р·Р°РїРѕР»РЅРµРЅ РѕР±СЏР·Р°С‚РµР»СЊРЅС‹Р№ РїР°СЂР°РјРµС‚СЂ config")
+            wsSummary.Cells(outRow, 1).Resize(1, 17).Value = Array(g.Station, g.Generator, g.EquipType, "", "", "", "", "", "", "", "", "Нарушение", "Н/Д", "", "", "", "Не заполнен обязательный параметр config")
             outRow = outRow + 1
             GoTo NextGen
         End If
@@ -153,11 +153,11 @@ NextGen:
     wsSummary.Columns("A:Q").AutoFit
     wsSummary.Range("D:D").NumberFormat = "dd.mm.yyyy hh:mm:ss"
     EnsureRunButton wsCfg
-    MsgBox "РњРѕРЅРёС‚РѕСЂРёРЅРі РћРџР Р§ Р·Р°РІРµСЂС€РµРЅ.", vbInformation
+    MsgBox "Мониторинг ОПРЧ завершен.", vbInformation
     Exit Sub
 
 EH:
-    MsgBox "РћС€РёР±РєР° AnalyzeOPRCH: " & Err.Description, vbCritical
+    MsgBox "Ошибка AnalyzeOPRCH: " & Err.Description, vbCritical
 End Sub
 
 Private Function AnalyzeOneGenerator(ByVal wsRaw As Worksheet, ByRef st As TSettings, ByRef g As TGenCfg) As TGenResult
@@ -167,11 +167,11 @@ Private Function AnalyzeOneGenerator(ByVal wsRaw As Worksheet, ByRef st As TSett
     Dim p0 As Double, ptek As Double, df As Double, dfr As Double, preq As Double, pfact As Double
     Dim qpct As Double, qpass As Boolean
 
-    timeCol = FindHeaderCol(wsRaw, "Р’СЂРµРјСЏ")
+    timeCol = FindHeaderCol(wsRaw, "Время")
     pCol = FindHeaderCol(wsRaw, g.PowerHeader)
     fCol = FindHeaderCol(wsRaw, g.FreqHeader)
-    If pCol = 0 Then Err.Raise vbObjectError + 2101, , "РќРµ РЅР°Р№РґРµРЅР° РєРѕР»РѕРЅРєР° РјРѕС‰РЅРѕСЃС‚Рё '" & g.PowerHeader & "' РґР»СЏ " & g.Generator
-    If fCol = 0 Then Err.Raise vbObjectError + 2102, , "РќРµ РЅР°Р№РґРµРЅР° РєРѕР»РѕРЅРєР° С‡Р°СЃС‚РѕС‚С‹ '" & g.FreqHeader & "' РґР»СЏ " & g.Generator
+    If pCol = 0 Then Err.Raise vbObjectError + 2101, , "Не найдена колонка мощности '" & g.PowerHeader & "' для " & g.Generator
+    If fCol = 0 Then Err.Raise vbObjectError + 2102, , "Не найдена колонка частоты '" & g.FreqHeader & "' для " & g.Generator
 
     startRow = ResolveStartRow(wsRaw, timeCol, fCol, st, g.Fnch)
     endQ = RowByTimeOffset(wsRaw, timeCol, startRow, st.QuantIntervalSec)
@@ -225,14 +225,14 @@ Private Sub EvaluateQualitative(ByVal wsRaw As Worksheet, ByRef st As TSettings,
 
     If Not g.QualEnabled Then
         res.QualPass = True
-        res.QualReason = "РљР°С‡РµСЃС‚РІРµРЅРЅР°СЏ РїСЂРѕРІРµСЂРєР° РѕС‚РєР»СЋС‡РµРЅР°"
+        res.QualReason = "Качественная проверка отключена"
         Exit Sub
     End If
 
     signReq = SgnNZ(res.PReq)
     If signReq = 0 Then
         res.QualPass = True
-        res.QualReason = "РљР°С‡РµСЃС‚РІРµРЅРЅР°СЏ РѕС†РµРЅРєР°: РІРЅРµ Р·РѕРЅС‹ РѕС‚РєР»РѕРЅРµРЅРёСЏ"
+        res.QualReason = "Качественная оценка: вне зоны отклонения"
         Exit Sub
     End If
 
@@ -268,16 +268,16 @@ Private Sub EvaluateQualitative(ByVal wsRaw As Worksheet, ByRef st As TSettings,
     steadyTolMW = g.SteadyTolPct / 100# * g.PNom
 
     reason = ""
-    If Not hit5 Or t5 > g.T5Sec Then reason = reason & "РќРµ РґРѕСЃС‚РёРіРЅСѓС‚ dP5 РІ t5; "
-    If Not hit10 Or t10 > g.T10Sec Then reason = reason & "РќРµ РґРѕСЃС‚РёРіРЅСѓС‚ dP10 РІ t10; "
-    If Abs(endVal - target10) > steadyTolMW Then reason = reason & "РћС‚РєР»РѕРЅРµРЅРёРµ РѕС‚ С†РµР»РµРІРѕРіРѕ СѓСЃС‚Р°РЅРѕРІРёРІС€РµРіРѕСЃСЏ > РґРѕРїСѓСЃРєР°; "
+    If Not hit5 Or t5 > g.T5Sec Then reason = reason & "Не достигнут dP5 в t5; "
+    If Not hit10 Or t10 > g.T10Sec Then reason = reason & "Не достигнут dP10 в t10; "
+    If Abs(endVal - target10) > steadyTolMW Then reason = reason & "Отклонение от целевого установившегося > допуска; "
 
     If Len(reason) = 0 Then
         res.QualPass = True
-        res.QualReason = "РљР°С‡РµСЃС‚РІРµРЅРЅС‹Рµ РєСЂРёС‚РµСЂРёРё РІС‹РїРѕР»РЅРµРЅС‹; t5=" & Format(t5, "0.0") & "СЃ; t10=" & Format(t10, "0.0") & "СЃ"
+        res.QualReason = "Качественные критерии выполнены; t5=" & Format(t5, "0.0") & "с; t10=" & Format(t10, "0.0") & "с"
     Else
         res.QualPass = False
-        res.QualReason = reason & " t5=" & IIf(t5 >= 0, Format(t5, "0.0"), "РЅ/Рґ") & "СЃ; t10=" & IIf(t10 >= 0, Format(t10, "0.0"), "РЅ/Рґ") & "СЃ"
+        res.QualReason = reason & " t5=" & IIf(t5 >= 0, Format(t5, "0.0"), "н/д") & "с; t10=" & IIf(t10 >= 0, Format(t10, "0.0"), "н/д") & "с"
     End If
 End Sub
 
@@ -289,7 +289,7 @@ Private Sub WriteGeneratorSheet(ByVal wsRaw As Worksheet, ByRef st As TSettings,
     Dim dP As Double, dFr As Double
     Dim chartObj As ChartObject
 
-    timeCol = FindHeaderCol(wsRaw, "Р’СЂРµРјСЏ")
+    timeCol = FindHeaderCol(wsRaw, "Время")
     pCol = FindHeaderCol(wsRaw, g.PowerHeader)
     fCol = FindHeaderCol(wsRaw, g.FreqHeader)
 
@@ -300,26 +300,26 @@ Private Sub WriteGeneratorSheet(ByVal wsRaw As Worksheet, ByRef st As TSettings,
         ws.ChartObjects(1).Delete
     Loop
 
-    ws.Range("A1:B1").Value = Array("РЎС‚Р°РЅС†РёСЏ", g.Station)
-    ws.Range("A2:B2").Value = Array("Р“РµРЅРµСЂР°С‚РѕСЂ", g.Generator)
-    ws.Range("A3:B3").Value = Array("РўРёРї", g.EquipType)
-    ws.Range("A4:B4").Value = Array("РЎС‚Р°СЂС‚", res.StartTime)
-    ws.Range("A5:B5").Value = Array("РљРѕР»РёС‡. СЃС‚Р°С‚СѓСЃ", IIf(res.QuantPass, "РћРљ", "РќР°СЂСѓС€РµРЅРёРµ"))
-    ws.Range("A6:B6").Value = Array("РљР°С‡. СЃС‚Р°С‚СѓСЃ", IIf(res.QualPass, "РћРљ", "РќР°СЂСѓС€РµРЅРёРµ"))
-    ws.Range("A7:B7").Value = Array("РљР°С‡. РїСЂРёРјРµС‡Р°РЅРёРµ", res.QualReason)
+    ws.Range("A1:B1").Value = Array("Станция", g.Station)
+    ws.Range("A2:B2").Value = Array("Генератор", g.Generator)
+    ws.Range("A3:B3").Value = Array("Тип", g.EquipType)
+    ws.Range("A4:B4").Value = Array("Старт", res.StartTime)
+    ws.Range("A5:B5").Value = Array("Колич. статус", IIf(res.QuantPass, "ОК", "Нарушение"))
+    ws.Range("A6:B6").Value = Array("Кач. статус", IIf(res.QualPass, "ОК", "Нарушение"))
+    ws.Range("A7:B7").Value = Array("Кач. примечание", res.QualReason)
 
     ws.Range("D1:E8").Value = Array( _
-        Array("P0, РњР’С‚", res.P0), _
-        Array("PС‚РµРє, РњР’С‚", res.PTek), _
-        Array("О”f, Р“С†", res.Df), _
-        Array("О”fСЂ, Р“С†", res.Dfr), _
-        Array("PС‚СЂРµР±, РњР’С‚", res.PReq), _
-        Array("PС„Р°РєС‚, РњР’С‚", res.PFact), _
-        Array("РљРѕР»РёС‡. %", res.QuantPct), _
-        Array("РРЅС‚РµСЂРІР°Р», СЃ", st.QuantIntervalSec) _
+        Array("P0, МВт", res.P0), _
+        Array("Pтек, МВт", res.PTek), _
+        Array("dF, Гц", res.Df), _
+        Array("dFr, Гц", res.Dfr), _
+        Array("Pтреб, МВт", res.PReq), _
+        Array("Pфакт, МВт", res.PFact), _
+        Array("Колич. %", res.QuantPct), _
+        Array("Интервал, с", st.QuantIntervalSec) _
     )
 
-    ws.Range("A10:F10").Value = Array("Р’СЂРµРјСЏ", "Р§Р°СЃС‚РѕС‚Р°, Р“С†", "P, РњР’С‚", "О”PС„Р°РєС‚, РњР’С‚", "PС‚СЂРµР±_РЅР°РєРѕРї, РњР’С‚", "О”fСЂ, Р“С†")
+    ws.Range("A10:F10").Value = Array("Время", "Частота, Гц", "P, МВт", "dPфакт, МВт", "Pтреб_накоп, МВт", "dFr, Гц")
     endRow = RowByTimeOffset(wsRaw, timeCol, res.StartRow, MaxD(st.QuantIntervalSec, g.T10Sec))
     outR = 11
 
@@ -339,11 +339,11 @@ Private Sub WriteGeneratorSheet(ByVal wsRaw As Worksheet, ByRef st As TSettings,
     Set chartObj = ws.ChartObjects.Add(20, 320, 950, 280)
     chartObj.Chart.ChartType = xlLine
     chartObj.Chart.HasTitle = True
-    chartObj.Chart.ChartTitle.Text = "РњРѕРЅРёС‚РѕСЂРёРЅРі РћРџР Р§: " & g.Generator
+    chartObj.Chart.ChartTitle.Text = "Мониторинг ОПРЧ: " & g.Generator
 
-    AddSeries chartObj.Chart, ws, 11, outR - 1, 1, 4, "О”PС„Р°РєС‚, РњР’С‚", False
-    AddSeries chartObj.Chart, ws, 11, outR - 1, 1, 5, "PС‚СЂРµР±, РњР’С‚", False
-    AddSeries chartObj.Chart, ws, 11, outR - 1, 1, 2, "Р§Р°СЃС‚РѕС‚Р°, Р“С†", True
+    AddSeries chartObj.Chart, ws, 11, outR - 1, 1, 4, "dPфакт, МВт", False
+    AddSeries chartObj.Chart, ws, 11, outR - 1, 1, 5, "Pтреб, МВт", False
+    AddSeries chartObj.Chart, ws, 11, outR - 1, 1, 2, "Частота, Гц", True
 
     chartObj.Chart.Axes(xlCategory).TickLabels.NumberFormat = "hh:mm:ss"
 
@@ -354,7 +354,7 @@ End Sub
 
 Private Sub BuildStationAggregates(ByVal wsRaw As Worksheet, ByVal wsCfg As Worksheet, ByVal wsSummary As Worksheet, ByRef st As TSettings)
     Dim stations As Variant, s As Variant
-    stations = Array("РЎРѕСЃРЅРѕРіРѕСЂСЃРєР°СЏ РўР­Р¦", "Р’РѕСЂРєСѓС‚РёРЅСЃРєР°СЏ РўР­Р¦", "РЎР›РџРљ")
+    stations = Array("Сосногорская ТЭЦ", "Воркутинская ТЭЦ", "СЛПК")
     For Each s In stations
         BuildOneStationAggregate wsRaw, wsCfg, CStr(s), st
     Next s
@@ -371,7 +371,7 @@ Private Sub BuildOneStationAggregate(ByVal wsRaw As Worksheet, ByVal wsCfg As Wo
     Dim i As Long, dfr As Double
 
     cfgLast = LastUsedRow(wsCfg)
-    timeCol = FindHeaderCol(wsRaw, "Р’СЂРµРјСЏ")
+    timeCol = FindHeaderCol(wsRaw, "Время")
     If timeCol = 0 Then Exit Sub
 
     cnt = 0
@@ -424,22 +424,22 @@ NextCfg:
     Next i
     pfact = pNow - p0
 
-    shName = MakeSheetName(stationName & "_РЎСѓРјРјР°")
+    shName = MakeSheetName(stationName & "_Сумма")
     Set ws = EnsureSheet(shName)
     ws.Cells.Clear
     Do While ws.ChartObjects.Count > 0
         ws.ChartObjects(1).Delete
     Loop
 
-    ws.Range("A1:B1").Value = Array("РЎС‚Р°РЅС†РёСЏ", stationName)
-    ws.Range("A2:B2").Value = Array("Р РµР¶РёРј", "РЎСѓРјРјР°СЂРЅР°СЏ РЅР°РіСЂСѓР·РєР° РІРєР»СЋС‡РµРЅРЅС‹С… РіРµРЅРµСЂР°С‚РѕСЂРѕРІ")
-    ws.Range("A3:B3").Value = Array("РЎС‚Р°СЂС‚", wsRaw.Cells(startRow, timeCol).Value)
-    ws.Range("A4:B4").Value = Array("P0, РњР’С‚", p0)
-    ws.Range("A5:B5").Value = Array("PС‚РµРє, РњР’С‚", pNow)
-    ws.Range("A6:B6").Value = Array("PС‚СЂРµР±, РњР’С‚", preq)
-    ws.Range("A7:B7").Value = Array("PС„Р°РєС‚, РњР’С‚", pfact)
+    ws.Range("A1:B1").Value = Array("Станция", stationName)
+    ws.Range("A2:B2").Value = Array("Режим", "Суммарная нагрузка включенных генераторов")
+    ws.Range("A3:B3").Value = Array("Старт", wsRaw.Cells(startRow, timeCol).Value)
+    ws.Range("A4:B4").Value = Array("P0, МВт", p0)
+    ws.Range("A5:B5").Value = Array("Pтек, МВт", pNow)
+    ws.Range("A6:B6").Value = Array("Pтреб, МВт", preq)
+    ws.Range("A7:B7").Value = Array("Pфакт, МВт", pfact)
 
-    ws.Range("A10:E10").Value = Array("Р’СЂРµРјСЏ", "Р§Р°СЃС‚РѕС‚Р°, Р“С†", "PСЃСѓРј, РњР’С‚", "О”PСЃСѓРј, РњР’С‚", "PС‚СЂРµР±_СЃСѓРј, РњР’С‚")
+    ws.Range("A10:E10").Value = Array("Время", "Частота, Гц", "Pсум, МВт", "dPсум, МВт", "Pтреб_сум, МВт")
     rowQ = 11
     For r = startRow To endRow
         ws.Cells(rowQ, 1).Value = wsRaw.Cells(r, timeCol).Value
@@ -468,10 +468,10 @@ NextCfg:
     Set chartObj = ws.ChartObjects.Add(20, 290, 930, 260)
     chartObj.Chart.ChartType = xlLine
     chartObj.Chart.HasTitle = True
-    chartObj.Chart.ChartTitle.Text = "РЎСѓРјРјР°СЂРЅС‹Р№ РјРѕРЅРёС‚РѕСЂРёРЅРі РћРџР Р§: " & stationName
-    AddSeries chartObj.Chart, ws, 11, rowQ - 1, 1, 4, "О”PСЃСѓРј, РњР’С‚", False
-    AddSeries chartObj.Chart, ws, 11, rowQ - 1, 1, 5, "PС‚СЂРµР±_СЃСѓРј, РњР’С‚", False
-    AddSeries chartObj.Chart, ws, 11, rowQ - 1, 1, 2, "Р§Р°СЃС‚РѕС‚Р°, Р“С†", True
+    chartObj.Chart.ChartTitle.Text = "Суммарный мониторинг ОПРЧ: " & stationName
+    AddSeries chartObj.Chart, ws, 11, rowQ - 1, 1, 4, "dPсум, МВт", False
+    AddSeries chartObj.Chart, ws, 11, rowQ - 1, 1, 5, "Pтреб_сум, МВт", False
+    AddSeries chartObj.Chart, ws, 11, rowQ - 1, 1, 2, "Частота, Гц", True
     chartObj.Chart.Axes(xlCategory).TickLabels.NumberFormat = "hh:mm:ss"
 
     ws.Columns("A:E").AutoFit
@@ -481,11 +481,11 @@ End Sub
 Private Sub WriteSummaryRow(ByVal ws As Worksheet, ByVal r As Long, ByRef g As TGenCfg, ByRef res As TGenResult)
     Dim note As String
     note = ""
-    If Not res.QuantPass Then note = "РљРѕР»РёС‡. РєСЂРёС‚РµСЂРёР№ РЅРµ РІС‹РїРѕР»РЅРµРЅ"
+    If Not res.QuantPass Then note = "Колич. критерий не выполнен"
     ws.Cells(r, 1).Resize(1, 17).Value = Array( _
         g.Station, g.Generator, g.EquipType, res.StartTime, res.P0, res.PTek, res.Df, res.Dfr, _
-        res.PReq, res.PFact, res.QuantPct, IIf(res.QuantPass, "РћРљ", "РќР°СЂСѓС€РµРЅРёРµ"), _
-        IIf(res.QualPass, "РћРљ", "РќР°СЂСѓС€РµРЅРёРµ"), ExtractT(res.QualReason, "t5"), ExtractT(res.QualReason, "t10"), _
+        res.PReq, res.PFact, res.QuantPct, IIf(res.QuantPass, "ОК", "Нарушение"), _
+        IIf(res.QualPass, "ОК", "Нарушение"), ExtractT(res.QualReason, "t5"), ExtractT(res.QualReason, "t10"), _
         MakeSheetName(g.Station & "_" & g.Generator), note _
     )
 End Sub
@@ -525,7 +525,7 @@ Private Function ReadGenCfg(ByVal ws As Worksheet, ByVal r As Long) As TGenCfg
     g.SteadyTolPct = NzD(ws.Cells(r, 16).Value, 1)
     g.InStationSum = (NzD(ws.Cells(r, 17).Value, 1) <> 0)
     If Len(g.PowerHeader) = 0 Then g.PowerHeader = g.Generator
-    If Len(g.FreqHeader) = 0 Then g.FreqHeader = "Р§Р°СЃС‚РѕС‚Р°"
+    If Len(g.FreqHeader) = 0 Then g.FreqHeader = "Частота"
     ReadGenCfg = g
 End Function
 
@@ -674,9 +674,9 @@ Private Function StationMatch(ByVal a As String, ByVal b As String) As Boolean
     Dim na As String, nb As String
     na = UCase$(Trim$(a))
     nb = UCase$(Trim$(b))
-    If InStr(na, "Р’РћР РљРЈРў") > 0 And InStr(nb, "Р’РћР РљРЈРў") > 0 Then StationMatch = True: Exit Function
-    If InStr(na, "РЎРћРЎРќРћР“РћР ") > 0 And InStr(nb, "РЎРћРЎРќРћР“РћР ") > 0 Then StationMatch = True: Exit Function
-    If InStr(na, "РЎР›РџРљ") > 0 And InStr(nb, "РЎР›РџРљ") > 0 Then StationMatch = True: Exit Function
+    If InStr(na, "ВОРКУТ") > 0 And InStr(nb, "ВОРКУТ") > 0 Then StationMatch = True: Exit Function
+    If InStr(na, "СОСНОГОР") > 0 And InStr(nb, "СОСНОГОР") > 0 Then StationMatch = True: Exit Function
+    If InStr(na, "СЛПК") > 0 And InStr(nb, "СЛПК") > 0 Then StationMatch = True: Exit Function
     StationMatch = (na = nb)
 End Function
 
@@ -727,7 +727,7 @@ Private Function GetRequiredSheet(ByVal name As String) As Worksheet
     Set GetRequiredSheet = ThisWorkbook.Worksheets(name)
     On Error GoTo 0
     If GetRequiredSheet Is Nothing Then
-        Err.Raise vbObjectError + 2999, , "РќРµ РЅР°Р№РґРµРЅ Р»РёСЃС‚ '" & name & "'. Р—Р°РїСѓСЃС‚РёС‚Рµ SetupOPRCHTemplate."
+        Err.Raise vbObjectError + 2999, , "Не найден лист '" & name & "'. Запустите SetupOPRCHTemplate."
     End If
 End Function
 
@@ -799,7 +799,7 @@ Private Sub EnsureRunButton(ByVal ws As Worksheet)
 
     Set shp = ws.Shapes.AddShape(msoShapeRoundedRectangle, 870, 8, 250, 30)
     shp.Name = BTN_NAME
-    shp.TextFrame2.TextRange.Text = "Р—Р°РїСѓСЃС‚РёС‚СЊ РјРѕРЅРёС‚РѕСЂРёРЅРі РћРџР Р§"
+    shp.TextFrame2.TextRange.Text = "Запустить мониторинг ОПРЧ"
     shp.OnAction = "AnalyzeOPRCH"
     shp.Fill.ForeColor.RGB = RGB(40, 120, 220)
     shp.Line.ForeColor.RGB = RGB(20, 70, 140)
