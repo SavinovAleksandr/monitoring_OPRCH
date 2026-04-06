@@ -105,11 +105,14 @@ Public Sub AnalyzeOPRCH()
     Dim timeCol As Long, cfgLast As Long, r As Long, outRow As Long
     Dim g As TGenCfg, res As TGenResult
     Dim targetSheets As Collection
+    Dim stepName As String
 
+    stepName = "Подготовка листов"
     Set wsRaw = GetRequiredSheet(SH_RAW)
     Set wsCfg = GetRequiredSheet(SH_CFG)
     Set wsSummary = EnsureSheet(SH_SUM)
 
+    stepName = "Чтение настроек"
     st = ReadSettings(wsCfg)
     timeCol = FindHeaderCol(wsRaw, "Время")
     If timeCol = 0 Then Err.Raise vbObjectError + 2001, , "В RawData не найдена колонка 'Время'."
@@ -117,10 +120,12 @@ Public Sub AnalyzeOPRCH()
     cfgLast = LastUsedRow(wsCfg)
     If cfgLast < 2 Then Err.Raise vbObjectError + 2002, , "В Config нет строк генераторов."
 
+    stepName = "Очистка выходных листов"
     Set targetSheets = New Collection
     CollectOldOutputSheets targetSheets
     DeleteOutputSheets targetSheets
 
+    stepName = "Подготовка Summary"
     wsSummary.Cells.Clear
     wsSummary.Range("A1:Q1").Value = Array( _
         "Станция", "Генератор", "Тип", "Старт", "P0, МВт", "Pтек, МВт", "dF, Гц", "dFr, Гц", _
@@ -129,6 +134,7 @@ Public Sub AnalyzeOPRCH()
     outRow = 2
 
     For r = 2 To cfgLast
+        stepName = "Чтение Config, строка " & r
         If Len(Trim$(CStr(wsCfg.Cells(r, 2).Value))) = 0 Then GoTo NextGen
 
         g = ReadGenCfg(wsCfg, r)
@@ -140,14 +146,18 @@ Public Sub AnalyzeOPRCH()
             GoTo NextGen
         End If
 
+        stepName = "Расчет генератора " & g.Generator
         res = AnalyzeOneGenerator(wsRaw, st, g)
+        stepName = "Запись листа генератора " & g.Generator
         WriteGeneratorSheet wsRaw, st, g, res
+        stepName = "Запись Summary для " & g.Generator
         WriteSummaryRow wsSummary, outRow, g, res
         outRow = outRow + 1
 
 NextGen:
     Next r
 
+    stepName = "Расчет суммарных листов станций"
     BuildStationAggregates wsRaw, wsCfg, wsSummary, st
 
     wsSummary.Columns("A:Q").AutoFit
@@ -157,7 +167,7 @@ NextGen:
     Exit Sub
 
 EH:
-    MsgBox "Ошибка AnalyzeOPRCH: " & Err.Description, vbCritical
+    MsgBox "Ошибка AnalyzeOPRCH (" & stepName & "): " & Err.Description, vbCritical
 End Sub
 
 Private Function AnalyzeOneGenerator(ByVal wsRaw As Worksheet, ByRef st As TSettings, ByRef g As TGenCfg) As TGenResult
@@ -308,16 +318,14 @@ Private Sub WriteGeneratorSheet(ByVal wsRaw As Worksheet, ByRef st As TSettings,
     ws.Range("A6:B6").Value = Array("Кач. статус", IIf(res.QualPass, "ОК", "Нарушение"))
     ws.Range("A7:B7").Value = Array("Кач. примечание", res.QualReason)
 
-    ws.Range("D1:E8").Value = Array( _
-        Array("P0, МВт", res.P0), _
-        Array("Pтек, МВт", res.PTek), _
-        Array("dF, Гц", res.Df), _
-        Array("dFr, Гц", res.Dfr), _
-        Array("Pтреб, МВт", res.PReq), _
-        Array("Pфакт, МВт", res.PFact), _
-        Array("Колич. %", res.QuantPct), _
-        Array("Интервал, с", st.QuantIntervalSec) _
-    )
+    ws.Cells(1, 4).Resize(1, 2).Value = Array("P0, МВт", res.P0)
+    ws.Cells(2, 4).Resize(1, 2).Value = Array("Pтек, МВт", res.PTek)
+    ws.Cells(3, 4).Resize(1, 2).Value = Array("dF, Гц", res.Df)
+    ws.Cells(4, 4).Resize(1, 2).Value = Array("dFr, Гц", res.Dfr)
+    ws.Cells(5, 4).Resize(1, 2).Value = Array("Pтреб, МВт", res.PReq)
+    ws.Cells(6, 4).Resize(1, 2).Value = Array("Pфакт, МВт", res.PFact)
+    ws.Cells(7, 4).Resize(1, 2).Value = Array("Колич. %", res.QuantPct)
+    ws.Cells(8, 4).Resize(1, 2).Value = Array("Интервал, с", st.QuantIntervalSec)
 
     ws.Range("A10:F10").Value = Array("Время", "Частота, Гц", "P, МВт", "dPфакт, МВт", "Pтреб_накоп, МВт", "dFr, Гц")
     endRow = RowByTimeOffset(wsRaw, timeCol, res.StartRow, MaxD(st.QuantIntervalSec, g.T10Sec))
