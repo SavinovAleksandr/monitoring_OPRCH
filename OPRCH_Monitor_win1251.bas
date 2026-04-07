@@ -12,7 +12,7 @@ Private Const SH_SUM As String = "Summary"
 
 Private Type TSettings
     FNom As Double
-    EventStart As Date
+    EventStart As Double
     AutoStart As Boolean
     QuantIntervalSec As Double
     QuantTolPct As Double
@@ -37,6 +37,7 @@ Private Type TGenCfg
     Dp10Pct As Double
     SteadyTolPct As Double
     InStationSum As Boolean
+    CheckSteady As Boolean
 End Type
 
 Private Type TGenResult
@@ -52,6 +53,12 @@ Private Type TGenResult
     QuantPct As Double
     QuantPass As Boolean
     QualPass As Boolean
+    QualT5Pass As Boolean
+    QualT10Pass As Boolean
+    QualSteadyPass As Boolean
+    T5FactSec As Double
+    T10FactSec As Double
+    QualFailedList As String
     QualReason As String
 End Type
 
@@ -72,15 +79,15 @@ Public Sub SetupOPRCHTemplate()
     wsRaw.Range("D1").Value = "ТГ-2"
     wsRaw.Range("E1").Value = "ТГ-3"
 
-    wsCfg.Range("A1:Q1").Value = Array( _
+    wsCfg.Range("A1:R1").Value = Array( _
         "Станция", "Генератор", "Колонка_мощности", "Колонка_частоты", "Тип_оборудования", _
         "Pном, МВт", "S, %", "fнч, Гц", "Kд", "Вкл (1/0)", "Кач_вкл (1/0)", _
-        "t5, c", "dP5, %Pном", "t10, c", "dP10, %Pном", "Уст_допуск, %Pном", "В сумму станции (1/0)" _
+        "t5, c", "dP5, %Pном", "t10, c", "dP10, %Pном", "Уст_допуск, %Pном", "В сумму станции (1/0)", "Контр_уст (1/0)" _
     )
 
-    wsCfg.Cells(2, 1).Resize(1, 17).Value = Array("Сосногорская ТЭЦ", "ТГ-5", "ТГ-5", "Частота", "ПТУ", 55, 4.2, 0.105, 0.5, 1, 1, 15, 5, 420, 10, 1, 1)
-    wsCfg.Cells(3, 1).Resize(1, 17).Value = Array("Сосногорская ТЭЦ", "ТГ-7", "ТГ-7", "Частота", "ПТУ", 60, 4.5, 0.11, 0.5, 1, 1, 15, 5, 420, 10, 1, 1)
-    wsCfg.Cells(4, 1).Resize(1, 17).Value = Array("СЛПК", "ТГ-2Э", "ТГ-2Э", "f СЛПК", "ПГУ_утилиз", 50, 4.5, 0.1, 0.5, 1, 1, 15, 5, 300, 10, 1, 1)
+    wsCfg.Cells(2, 1).Resize(1, 18).Value = Array("Сосногорская ТЭЦ", "ТГ-5", "ТГ-5", "Частота", "ПТУ", 55, 4.2, 0.105, 0.5, 1, 1, 15, 5, 420, 10, 1, 1, 1)
+    wsCfg.Cells(3, 1).Resize(1, 18).Value = Array("Сосногорская ТЭЦ", "ТГ-7", "ТГ-7", "Частота", "ПТУ", 60, 4.5, 0.11, 0.5, 1, 1, 15, 5, 420, 10, 1, 1, 1)
+    wsCfg.Cells(4, 1).Resize(1, 18).Value = Array("СЛПК", "ТГ-2Э", "ТГ-2Э", "f СЛПК", "ПГУ_утилиз", 50, 4.5, 0.1, 0.5, 1, 1, 15, 5, 300, 10, 1, 1, 1)
 
     wsCfg.Range("S1").Value = "Глобальные настройки"
     wsCfg.Cells(2, 18).Resize(1, 2).Value = Array("fном, Гц", 50)
@@ -127,9 +134,11 @@ Public Sub AnalyzeOPRCH()
 
     stepName = "Подготовка Summary"
     wsSummary.Cells.Clear
-    wsSummary.Range("A1:Q1").Value = Array( _
+    wsSummary.Range("A1:V1").Value = Array( _
         "Станция", "Генератор", "Тип", "Старт", "P0, МВт", "Pтек, МВт", "dF, Гц", "dFr, Гц", _
-        "Pтреб, МВт", "Pфакт, МВт", "Колич. %", "Колич. статус", "Кач. статус", "t5 факт, c", "t10 факт, c", "Лист", "Примечание" _
+        "Pтреб, МВт", "Pфакт, МВт", "Колич. %", "Колич. статус", "Кач. статус", _
+        "Кач.t5", "Кач.t10", "Кач.уст", "Проваленные подпункты", "t5 факт, c", "t10 факт, c", _
+        "Лист", "Примечание" _
     )
     outRow = 2
 
@@ -141,7 +150,11 @@ Public Sub AnalyzeOPRCH()
         If Not g.Enabled Then GoTo NextGen
 
         If Not ValidateGenCfg(g) Then
-            wsSummary.Cells(outRow, 1).Resize(1, 17).Value = Array(g.Station, g.Generator, g.EquipType, "", "", "", "", "", "", "", "", "Нарушение", "Н/Д", "", "", "", "Не заполнен обязательный параметр config")
+            wsSummary.Cells(outRow, 1).Resize(1, 22).Value = Array( _
+                g.Station, g.Generator, g.EquipType, "", "", "", "", "", "", "", "", _
+                "Нарушение", "Н/Д", "Н/Д", "Н/Д", "Н/Д", "Config", "", "", "", "", _
+                "Не заполнен обязательный параметр config" _
+            )
             outRow = outRow + 1
             GoTo NextGen
         End If
@@ -160,7 +173,7 @@ NextGen:
     stepName = "Расчет суммарных листов станций"
     BuildStationAggregates wsRaw, wsCfg, wsSummary, st
 
-    wsSummary.Columns("A:Q").AutoFit
+    wsSummary.Columns("A:V").AutoFit
     wsSummary.Range("D:D").NumberFormat = "dd.mm.yyyy hh:mm:ss"
     EnsureRunButton wsCfg
     MsgBox "Мониторинг ОПРЧ завершен.", vbInformation
@@ -171,33 +184,44 @@ EH:
 End Sub
 
 Private Function AnalyzeOneGenerator(ByVal wsRaw As Worksheet, ByRef st As TSettings, ByRef g As TGenCfg) As TGenResult
+    On Error GoTo EH
+
     Dim res As TGenResult
     Dim timeCol As Long, pCol As Long, fCol As Long
     Dim startRow As Long, endQ As Long
     Dim p0 As Double, ptek As Double, df As Double, dfr As Double, preq As Double, pfact As Double
     Dim qpct As Double, qpass As Boolean
+    Dim calcStep As String
 
+    calcStep = "Поиск колонок времени/мощности/частоты"
     timeCol = FindHeaderCol(wsRaw, "Время")
     pCol = FindHeaderCol(wsRaw, g.PowerHeader)
     fCol = FindHeaderCol(wsRaw, g.FreqHeader)
     If pCol = 0 Then Err.Raise vbObjectError + 2101, , "Не найдена колонка мощности '" & g.PowerHeader & "' для " & g.Generator
     If fCol = 0 Then Err.Raise vbObjectError + 2102, , "Не найдена колонка частоты '" & g.FreqHeader & "' для " & g.Generator
 
+    calcStep = "Определение стартовой строки"
     startRow = ResolveStartRow(wsRaw, timeCol, fCol, st, g.Fnch)
+    calcStep = "Определение конца количественного интервала"
     endQ = RowByTimeOffset(wsRaw, timeCol, startRow, st.QuantIntervalSec)
 
+    calcStep = "Чтение P0/Pтек"
     p0 = NzD(wsRaw.Cells(startRow, pCol).Value, 0)
     ptek = NzD(wsRaw.Cells(endQ, pCol).Value, 0)
+    calcStep = "Расчет dF/dFr"
     df = MaxAbsDeviationInWindow(wsRaw, fCol, startRow, endQ, st.FNom)
     dfr = DeadbandDeviation(df, g.Fnch)
 
+    calcStep = "Расчет требуемой мощности"
     If dfr <> 0 Then
         preq = -100# / g.SPct * g.PNom / st.FNom * g.Kd * dfr
     Else
         preq = 0
     End If
+    calcStep = "Расчет фактической мощности"
     pfact = ptek - p0
 
+    calcStep = "Оценка количественного критерия"
     If dfr = 0 Then
         qpct = 100
         qpass = True
@@ -221,40 +245,66 @@ Private Function AnalyzeOneGenerator(ByVal wsRaw As Worksheet, ByRef st As TSett
     res.QuantPct = qpct
     res.QuantPass = qpass
 
+    calcStep = "Оценка качественного критерия"
     EvaluateQualitative wsRaw, st, g, res, pCol, fCol, timeCol
     AnalyzeOneGenerator = res
+    Exit Function
+
+EH:
+    Err.Raise vbObjectError + 2199, , "AnalyzeOneGenerator (" & g.Generator & " / " & calcStep & "): " & Err.Description
 End Function
 
 Private Sub EvaluateQualitative(ByVal wsRaw As Worksheet, ByRef st As TSettings, ByRef g As TGenCfg, ByRef res As TGenResult, _
                                 ByVal pCol As Long, ByVal fCol As Long, ByVal timeCol As Long)
+    On Error GoTo EH
+
     Dim signReq As Integer, t5 As Double, t10 As Double
     Dim r As Long, endRow As Long, dP As Double, target5 As Double, target10 As Double
     Dim hit5 As Boolean, hit10 As Boolean, row5 As Long, row10 As Long
     Dim endVal As Double, steadyTolMW As Double
     Dim reason As String
+    Dim qStep As String
+    Dim failed As String
 
+    qStep = "Проверка включения качественного критерия"
     If Not g.QualEnabled Then
         res.QualPass = True
+        res.QualT5Pass = True
+        res.QualT10Pass = True
+        res.QualSteadyPass = True
+        res.T5FactSec = -1
+        res.T10FactSec = -1
+        res.QualFailedList = ""
         res.QualReason = "Качественная проверка отключена"
         Exit Sub
     End If
 
+    qStep = "Определение направления требуемого отклика"
     signReq = SgnNZ(res.PReq)
     If signReq = 0 Then
         res.QualPass = True
+        res.QualT5Pass = True
+        res.QualT10Pass = True
+        res.QualSteadyPass = True
+        res.T5FactSec = -1
+        res.T10FactSec = -1
+        res.QualFailedList = ""
         res.QualReason = "Качественная оценка: вне зоны отклонения"
         Exit Sub
     End If
 
+    qStep = "Расчет целевых ступеней dP5/dP10"
     target5 = signReq * g.PNom * g.Dp5Pct / 100#
     target10 = signReq * g.PNom * g.Dp10Pct / 100#
 
+    qStep = "Определение конца окна качественной оценки"
     endRow = RowByTimeOffset(wsRaw, timeCol, res.StartRow, g.T10Sec)
     row5 = 0
     row10 = 0
     hit5 = False
     hit10 = False
 
+    qStep = "Поиск моментов достижения dP5/dP10"
     For r = res.StartRow To endRow
         dP = NzD(wsRaw.Cells(r, pCol).Value, 0) - res.P0
         If Not hit5 Then
@@ -271,24 +321,67 @@ Private Sub EvaluateQualitative(ByVal wsRaw As Worksheet, ByRef st As TSettings,
         End If
     Next r
 
-    t5 = IIf(hit5, SecBetween(wsRaw.Cells(res.StartRow, timeCol).Value, wsRaw.Cells(row5, timeCol).Value), -1)
-    t10 = IIf(hit10, SecBetween(wsRaw.Cells(res.StartRow, timeCol).Value, wsRaw.Cells(row10, timeCol).Value), -1)
+    qStep = "Расчет фактических времен t5/t10"
+    If hit5 Then
+        t5 = SecBetween(wsRaw.Cells(res.StartRow, timeCol).Value, wsRaw.Cells(row5, timeCol).Value)
+    Else
+        t5 = -1
+    End If
 
+    If hit10 Then
+        t10 = SecBetween(wsRaw.Cells(res.StartRow, timeCol).Value, wsRaw.Cells(row10, timeCol).Value)
+    Else
+        t10 = -1
+    End If
+    res.T5FactSec = t5
+    res.T10FactSec = t10
+
+    qStep = "Проверка установившегося значения"
     endVal = NzD(wsRaw.Cells(endRow, pCol).Value, 0) - res.P0
     steadyTolMW = g.SteadyTolPct / 100# * g.PNom
 
-    reason = ""
-    If Not hit5 Or t5 > g.T5Sec Then reason = reason & "Не достигнут dP5 в t5; "
-    If Not hit10 Or t10 > g.T10Sec Then reason = reason & "Не достигнут dP10 в t10; "
-    If Abs(endVal - target10) > steadyTolMW Then reason = reason & "Отклонение от целевого установившегося > допуска; "
+    res.QualT5Pass = (hit5 And t5 <= g.T5Sec)
+    res.QualT10Pass = (hit10 And t10 <= g.T10Sec)
+    If g.CheckSteady Then
+        res.QualSteadyPass = (Abs(endVal - target10) <= steadyTolMW)
+    Else
+        res.QualSteadyPass = True
+    End If
 
-    If Len(reason) = 0 Then
+    reason = ""
+    failed = ""
+    If Not res.QualT5Pass Then
+        reason = reason & "Не достигнут dP5 в t5; "
+        failed = failed & "t5; "
+    End If
+    If Not res.QualT10Pass Then
+        reason = reason & "Не достигнут dP10 в t10; "
+        failed = failed & "t10; "
+    End If
+    If g.CheckSteady And (Not res.QualSteadyPass) Then
+        reason = reason & "Отклонение от целевого установившегося > допуска; "
+        failed = failed & "уст; "
+    End If
+    If Not g.CheckSteady Then reason = reason & "Контроль установившегося отключен; "
+
+    res.QualPass = (res.QualT5Pass And res.QualT10Pass And res.QualSteadyPass)
+    If Len(failed) > 0 Then
+        If Right$(failed, 2) = "; " Then failed = Left$(failed, Len(failed) - 2)
+        res.QualFailedList = failed
+    Else
+        res.QualFailedList = ""
+    End If
+
+    If res.QualPass Then
         res.QualPass = True
         res.QualReason = "Качественные критерии выполнены; t5=" & Format(t5, "0.0") & "с; t10=" & Format(t10, "0.0") & "с"
     Else
-        res.QualPass = False
         res.QualReason = reason & " t5=" & IIf(t5 >= 0, Format(t5, "0.0"), "н/д") & "с; t10=" & IIf(t10 >= 0, Format(t10, "0.0"), "н/д") & "с"
     End If
+    Exit Sub
+
+EH:
+    Err.Raise vbObjectError + 2299, , "EvaluateQualitative (" & g.Generator & " / " & qStep & "): " & Err.Description
 End Sub
 
 Private Sub WriteGeneratorSheet(ByVal wsRaw As Worksheet, ByRef st As TSettings, ByRef g As TGenCfg, ByRef res As TGenResult)
@@ -490,10 +583,12 @@ Private Sub WriteSummaryRow(ByVal ws As Worksheet, ByVal r As Long, ByRef g As T
     Dim note As String
     note = ""
     If Not res.QuantPass Then note = "Колич. критерий не выполнен"
-    ws.Cells(r, 1).Resize(1, 17).Value = Array( _
+    ws.Cells(r, 1).Resize(1, 22).Value = Array( _
         g.Station, g.Generator, g.EquipType, res.StartTime, res.P0, res.PTek, res.Df, res.Dfr, _
         res.PReq, res.PFact, res.QuantPct, IIf(res.QuantPass, "ОК", "Нарушение"), _
-        IIf(res.QualPass, "ОК", "Нарушение"), ExtractT(res.QualReason, "t5"), ExtractT(res.QualReason, "t10"), _
+        IIf(res.QualPass, "ОК", "Нарушение"), IIf(res.QualT5Pass, "ОК", "Нарушение"), IIf(res.QualT10Pass, "ОК", "Нарушение"), _
+        IIf(res.QualSteadyPass, "ОК", "Нарушение"), res.QualFailedList, _
+        FormatSecOrNA(res.T5FactSec), FormatSecOrNA(res.T10FactSec), _
         MakeSheetName(g.Station & "_" & g.Generator), note _
     )
 End Sub
@@ -532,6 +627,7 @@ Private Function ReadGenCfg(ByVal ws As Worksheet, ByVal r As Long) As TGenCfg
     g.Dp10Pct = NzD(ws.Cells(r, 15).Value, 10)
     g.SteadyTolPct = NzD(ws.Cells(r, 16).Value, 1)
     g.InStationSum = (NzD(ws.Cells(r, 17).Value, 1) <> 0)
+    g.CheckSteady = (NzD(ws.Cells(r, 18).Value, 1) <> 0)
     If Len(g.PowerHeader) = 0 Then g.PowerHeader = g.Generator
     If Len(g.FreqHeader) = 0 Then g.FreqHeader = "Частота"
     ReadGenCfg = g
@@ -546,7 +642,7 @@ Private Function ResolveStartRow(ByVal wsRaw As Worksheet, ByVal timeCol As Long
                                  ByRef st As TSettings, ByVal fnch As Double) As Long
     Dim lastR As Long, r As Long
     Dim prevAbs As Double, curAbs As Double
-    Dim bestRow As Long, bestAbs As Double, val As Double, t As Date, dt As Double
+    Dim bestRow As Long, bestAbs As Double, val As Double, t As Double, dt As Double
 
     lastR = LastUsedRow(wsRaw)
     If lastR < 3 Then
@@ -559,7 +655,7 @@ Private Function ResolveStartRow(ByVal wsRaw As Worksheet, ByVal timeCol As Long
         bestAbs = 1E+99
         For r = 2 To lastR
             If IsDate(wsRaw.Cells(r, timeCol).Value) Then
-                t = CDate(wsRaw.Cells(r, timeCol).Value)
+                t = CDbl(CDate(wsRaw.Cells(r, timeCol).Value))
                 dt = Abs(CDbl(t - st.EventStart))
                 If dt < bestAbs Then
                     bestAbs = dt
@@ -594,24 +690,24 @@ Private Function ResolveStartRow(ByVal wsRaw As Worksheet, ByVal timeCol As Long
 End Function
 
 Private Function RowByTimeOffset(ByVal wsRaw As Worksheet, ByVal timeCol As Long, ByVal startRow As Long, ByVal offsetSec As Double) As Long
-    Dim t0 As Date, tTarget As Date
+    Dim t0 As Double, tTarget As Double
     Dim r As Long, lastR As Long, bestRow As Long
-    Dim curT As Date, bestDiff As Double, curDiff As Double
+    Dim curT As Double, bestDiff As Double, curDiff As Double
 
     If Not IsDate(wsRaw.Cells(startRow, timeCol).Value) Then
         RowByTimeOffset = startRow
         Exit Function
     End If
 
-    t0 = CDate(wsRaw.Cells(startRow, timeCol).Value)
-    tTarget = DateAdd("s", CLng(offsetSec), t0)
+    t0 = CDbl(CDate(wsRaw.Cells(startRow, timeCol).Value))
+    tTarget = CDbl(DateAdd("s", CLng(offsetSec), CDate(t0)))
     lastR = LastUsedRow(wsRaw)
     bestRow = startRow
     bestDiff = 1E+99
 
     For r = startRow To lastR
         If IsDate(wsRaw.Cells(r, timeCol).Value) Then
-            curT = CDate(wsRaw.Cells(r, timeCol).Value)
+            curT = CDbl(CDate(wsRaw.Cells(r, timeCol).Value))
             curDiff = Abs(CDbl(curT - tTarget))
             If curDiff < bestDiff Then
                 bestDiff = curDiff
@@ -713,6 +809,14 @@ Private Function ExtractT(ByVal txt As String, ByVal key As String) As String
     p = InStr(s, ";")
     If p > 0 Then s = Left$(s, p - 1)
     ExtractT = s
+End Function
+
+Private Function FormatSecOrNA(ByVal secVal As Double) As String
+    If secVal < 0 Then
+        FormatSecOrNA = "н/д"
+    Else
+        FormatSecOrNA = Format(secVal, "0.0")
+    End If
 End Function
 
 Private Function MakeSheetName(ByVal s As String) As String
