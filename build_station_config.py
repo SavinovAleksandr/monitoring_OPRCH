@@ -114,6 +114,12 @@ def collect_records(base_dir: str):
                     freq_header = freq_h
                     break
 
+            paroprovod = ""
+            if "СЛПК" in station.upper():
+                suffix = generator.strip()[-1:].upper()
+                if suffix in ("Э", "У"):
+                    paroprovod = suffix
+
             vals = rt_map.get(nkey, {})
             records.append(
                 {
@@ -134,6 +140,8 @@ def collect_records(base_dir: str):
                     "dP10, %Pном": 10,
                     "Уст_допуск, %Pном": 1,
                     "В сумму станции (1/0)": 1 if any(k in station.upper() for k in ["СОСНОГОР", "ВОРКУТ", "СЛПК"]) else 0,
+                    "Контр_уст (1/0)": 1,
+                    "Паропровод": paroprovod,
                     "Источник_параметров": "oik_embedded" if vals else "",
                     "Файл": filename,
                 }
@@ -161,6 +169,8 @@ def write_output(path: str, records):
         "dP10, %Pном",
         "Уст_допуск, %Pном",
         "В сумму станции (1/0)",
+        "Контр_уст (1/0)",
+        "Паропровод",
         "Источник_параметров",
         "Файл",
     ]
@@ -172,24 +182,30 @@ def write_output(path: str, records):
     for rec in records:
         ws.append([rec[h] for h in headers])
 
-    # Sheet ready to copy directly into Excel macro Config (A:Q + S:T settings).
+    # Sheet ready to copy directly into Excel macro Config (A:S + T:U settings).
     cfg = wb.create_sheet("Config_For_Macro")
-    cfg.append(headers[:-2])  # without helper metadata columns
+    cfg.append(headers[:-2])  # without helper metadata columns (Источник/Файл)
     for rec in records:
         cfg.append([rec[h] for h in headers[:-2]])
-    cfg["S1"] = "Глобальные настройки"
-    cfg["S2"] = "fном, Гц"
-    cfg["T2"] = 50
-    cfg["S3"] = "Время начала события"
-    cfg["T3"] = ""
-    cfg["S4"] = "Автопоиск старта (1/0)"
-    cfg["T4"] = 1
-    cfg["S5"] = "Колич. интервал, с"
-    cfg["T5"] = 82
-    cfg["S6"] = "Допуск количеств., %"
-    cfg["T6"] = 10
-    cfg["S7"] = "Порог включения в работу, МВт"
-    cfg["T7"] = 1
+    cfg["T1"] = "Глобальные настройки"
+    cfg["T2"] = "fном, Гц"
+    cfg["U2"] = 50
+    cfg["T3"] = "Время начала события"
+    cfg["U3"] = ""
+    cfg["T4"] = "Автопоиск старта (1/0)"
+    cfg["U4"] = 1
+    cfg["T5"] = "Колич. интервал, с"
+    cfg["U5"] = 82
+    cfg["T6"] = "Допуск количеств., %"
+    cfg["U6"] = 10
+    cfg["T7"] = "Порог включения в работу, МВт"
+    cfg["U7"] = 1
+    cfg["T8"] = "Pre-start буфер, с"
+    cfg["U8"] = 5
+    cfg["T9"] = "Интервал графика, с"
+    cfg["U9"] = 120
+    cfg["T10"] = "Окно установив., с"
+    cfg["U10"] = 30
 
     grouped = {}
     for rec in records:
