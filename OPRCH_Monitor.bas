@@ -7,7 +7,7 @@ Option Explicit
 ' Per-station:    data sheet <Ст>_Сумма[_<Пп>] +  chart sheet <...>_Граф
 ' Extra sheets:   Summary, Log
 '
-' Версия: 1.3.0
+' Версия: 1.4.0
 ' Основные критерии:
 '   - Количественный (|Pфакт|/|Pтреб|) с допуском и направлением;
 '   - Перерегулирование (>100%+допуск);
@@ -15,10 +15,15 @@ Option Explicit
 '   - Характер переходного процесса: Монотонный / Апериодический / Колебательный;
 '   - Амплитуда возмущения в %Pном и метка масштаба события;
 '   - Пресеты параметров по типу оборудования (ПТУ_блок / ПТУ_неблок /
-'     ГТУ / ПГУ_утил / ПГУ_сбросн / ГПА) подставляются при пустых ячейках.
+'     ГТУ / ПГУ_утил / ПГУ_сбросн / ГПА) подставляются при пустых ячейках;
+'   - Учет Pmax/Pmin (диапазон регулирования): капинг Pтреб по располагаемому
+'     резерву, статус 'Ограничен Pmax/Pmin' в Summary, WARN при резерве <5 %Pном,
+'     горизонтальные уровни Pmax/Pmin и цветная зона за лимитом на графике.
+'     Для станционных сумм Pmax_сум/Pmin_сум = сумма по включенным генераторам
+'     (по паропроводам У/Э для ТЭЦ СЛПК).
 ' ==========================================================
 
-Public Const OPRCH_VERSION As String = "1.3.1"
+Public Const OPRCH_VERSION As String = "1.4.0"
 
 Private Const SH_RAW As String = "RawData"
 Private Const SH_CFG As String = "Config"
@@ -60,6 +65,8 @@ Private Type TGenCfg
     InStationSum As Boolean
     CheckSteady As Boolean
     Paroprovod As String
+    PMax As Double          ' максимальная эксплуатационная мощность, МВт
+    PMin As Double          ' технический минимум, МВт
 End Type
 
 Private Type TGenResult
@@ -74,6 +81,7 @@ Private Type TGenResult
     Df As Double
     Dfr As Double
     PReq As Double
+    PReqOrig As Double      ' исходный требуемый, до ограничения Pmax/Pmin
     PFact As Double
     AmplPctPnom As Double
     AmplitudeTag As String
@@ -91,6 +99,12 @@ Private Type TGenResult
     T10FactSec As Double
     QualFailedList As String
     QualReason As String
+    PMaxEff As Double       ' эффективная Pmax (g.PMax или g.PNom по умолчанию)
+    PMinEff As Double       ' эффективная Pmin (g.PMin или 0)
+    ReservePlus As Double   ' располагаемый резерв '+' = max(0, PMax - P0)
+    ReserveMinus As Double  ' располагаемый резерв '-' = max(0, P0 - PMin)
+    Limited As Boolean      ' Pтреб был ограничен диапазоном
+    LimitType As String     ' 'Pmax' или 'Pmin'
 End Type
 
 ' ==========================================================
@@ -114,30 +128,31 @@ Public Sub SetupOPRCHTemplate()
     wsRaw.Range("D1").Value = "ТГ-2"
     wsRaw.Range("E1").Value = "ТГ-3"
 
-    wsCfg.Range("A1:S1").Value = Array( _
+    wsCfg.Range("A1:U1").Value = Array( _
         "Станция", "Генератор", "Колонка_мощности", "Колонка_частоты", "Тип_оборудования", _
         "Pном, МВт", "S, %", "fнч, Гц", "Kд", "Вкл (1/0)", "Кач_вкл (1/0)", _
         "t5, c", "dP5, %Pном", "t10, c", "dP10, %Pном", "Уст_допуск, %Pном", _
-        "В сумму станции (1/0)", "Контр_уст (1/0)", "Паропровод" _
+        "В сумму станции (1/0)", "Контр_уст (1/0)", "Паропровод", _
+        "Pmax, МВт", "Pmin, МВт" _
     )
 
-    wsCfg.Cells(2, 1).Resize(1, 19).Value = Array("Сосногорская ТЭЦ", "ТГ-5", "ТГ-5", "Частота", "ПТУ_неблок", 55, 4.2, 0.105, 0.5, 1, 1, 15, 5, 420, 10, 1, 1, 1, "")
-    wsCfg.Cells(3, 1).Resize(1, 19).Value = Array("Сосногорская ТЭЦ", "ТГ-7", "ТГ-7", "Частота", "ПТУ_неблок", 60, 4.5, 0.11, 0.5, 1, 1, 15, 5, 420, 10, 1, 1, 1, "")
-    wsCfg.Cells(4, 1).Resize(1, 19).Value = Array("ТЭЦ СЛПК", "ТГ-2Э", "ТГ-2Э", "Частота", "ПТУ_неблок", 50, 4.5, 0.15, 0.5, 1, 1, 15, 5, 420, 10, 1, 1, 1, "Э")
-    wsCfg.Cells(5, 1).Resize(1, 19).Value = Array("ТЭЦ СЛПК", "ТГ-5У", "ТГ-5У", "Частота", "ПТУ_неблок", 87.7, 4.2, 0.15, 0.5, 1, 1, 15, 5, 420, 10, 1, 1, 1, "У")
+    wsCfg.Cells(2, 1).Resize(1, 21).Value = Array("Сосногорская ТЭЦ", "ТГ-5", "ТГ-5", "Частота", "ПТУ_неблок", 55, 4.2, 0.105, 0.5, 1, 1, 15, 5, 420, 10, 1, 1, 1, "", 55, 15)
+    wsCfg.Cells(3, 1).Resize(1, 21).Value = Array("Сосногорская ТЭЦ", "ТГ-7", "ТГ-7", "Частота", "ПТУ_неблок", 60, 4.5, 0.11, 0.5, 1, 1, 15, 5, 420, 10, 1, 1, 1, "", 60, 20)
+    wsCfg.Cells(4, 1).Resize(1, 21).Value = Array("ТЭЦ СЛПК", "ТГ-2Э", "ТГ-2Э", "Частота", "ПТУ_неблок", 50, 4.5, 0.15, 0.5, 1, 1, 15, 5, 420, 10, 1, 1, 1, "Э", 50, 15)
+    wsCfg.Cells(5, 1).Resize(1, 21).Value = Array("ТЭЦ СЛПК", "ТГ-5У", "ТГ-5У", "Частота", "ПТУ_неблок", 87.7, 4.2, 0.15, 0.5, 1, 1, 15, 5, 420, 10, 1, 1, 1, "У", 87.7, 25)
 
-    wsCfg.Range("T1").Value = "Глобальные настройки"
-    wsCfg.Cells(2, 20).Resize(1, 2).Value = Array("fном, Гц", 50)
-    wsCfg.Cells(3, 20).Resize(1, 2).Value = Array("Время начала события", "")
-    wsCfg.Cells(4, 20).Resize(1, 2).Value = Array("Автопоиск старта (1/0)", 1)
-    wsCfg.Cells(5, 20).Resize(1, 2).Value = Array("Колич. интервал, с", 82)
-    wsCfg.Cells(6, 20).Resize(1, 2).Value = Array("Допуск количеств., %", 10)
-    wsCfg.Cells(7, 20).Resize(1, 2).Value = Array("Порог включения в работу, МВт", 1)
-    wsCfg.Cells(8, 20).Resize(1, 2).Value = Array("Pre-start буфер, с", 5)
-    wsCfg.Cells(9, 20).Resize(1, 2).Value = Array("Интервал графика, с", 120)
-    wsCfg.Cells(10, 20).Resize(1, 2).Value = Array("Окно установив., с", 30)
+    wsCfg.Range("W1").Value = "Глобальные настройки"
+    wsCfg.Cells(2, 23).Resize(1, 2).Value = Array("fном, Гц", 50)
+    wsCfg.Cells(3, 23).Resize(1, 2).Value = Array("Время начала события", "")
+    wsCfg.Cells(4, 23).Resize(1, 2).Value = Array("Автопоиск старта (1/0)", 1)
+    wsCfg.Cells(5, 23).Resize(1, 2).Value = Array("Колич. интервал, с", 82)
+    wsCfg.Cells(6, 23).Resize(1, 2).Value = Array("Допуск количеств., %", 10)
+    wsCfg.Cells(7, 23).Resize(1, 2).Value = Array("Порог включения в работу, МВт", 1)
+    wsCfg.Cells(8, 23).Resize(1, 2).Value = Array("Pre-start буфер, с", 5)
+    wsCfg.Cells(9, 23).Resize(1, 2).Value = Array("Интервал графика, с", 120)
+    wsCfg.Cells(10, 23).Resize(1, 2).Value = Array("Окно установив., с", 30)
 
-    wsCfg.Columns("A:V").AutoFit
+    wsCfg.Columns("A:Y").AutoFit
     wsRaw.Columns("A:E").AutoFit
     EnsureControlButtons wsCfg
 
@@ -185,7 +200,7 @@ Public Sub AnalyzeOPRCH()
 
     stepName = "Подготовка Summary"
     wsSummary.Cells.Clear
-    wsSummary.Range("A1:AC1").Value = Array( _
+    wsSummary.Range("A1:AI1").Value = Array( _
         "Станция", "Генератор", "Тип", _
         "Старт (расч.)", "Время выхода за fнч", _
         "P0, МВт", "Pтек, МВт", "Pуст_сред, МВт", _
@@ -196,7 +211,10 @@ Public Sub AnalyzeOPRCH()
         "Характер процесса", "Экстремумов", _
         "Кач. статус", "Кач.t5", "Кач.t10", "Кач.уст", _
         "Проваленные подпункты", "t5 факт, c", "t10 факт, c", _
-        "Лист", "Лист графика", "Примечание" _
+        "Лист", "Лист графика", _
+        "Pmax, МВт", "Pmin, МВт", "Резерв '+', МВт", "Резерв '-', МВт", _
+        "Pтреб исх., МВт", "Ограничение", _
+        "Примечание" _
     )
     outRow = 2
 
@@ -231,7 +249,7 @@ NextGen:
     BuildStationAggregates wsRaw, wsCfg, wsSummary, st
 
     stepName = "Оформление Summary"
-    wsSummary.Columns("A:AC").AutoFit
+    wsSummary.Columns("A:AI").AutoFit
     wsSummary.Range("D:E").NumberFormat = "dd.mm.yyyy hh:mm:ss"
     ApplySummaryConditionalFormat wsSummary
     WriteVersionStamp wsSummary, wsRaw, t0Run
@@ -321,16 +339,50 @@ Private Function AnalyzeOneGenerator(ByVal wsRaw As Worksheet, ByRef st As TSett
     dfr = DeadbandDeviation(df, g.Fnch)
 
     calcStep = "Расчет требуемой мощности"
+    Dim preqOrig As Double
     If dfr <> 0 Then
-        preq = -100# / g.SPct * g.PNom / st.FNom * g.Kd * dfr
+        preqOrig = -100# / g.SPct * g.PNom / st.FNom * g.Kd * dfr
     Else
-        preq = 0
+        preqOrig = 0
     End If
+
+    calcStep = "Учет Pmax/Pmin (резерв)"
+    Dim pMaxEff As Double, pMinEff As Double
+    Dim reservePlus As Double, reserveMinus As Double
+    pMaxEff = g.PMax
+    If pMaxEff <= 0 Then pMaxEff = g.PNom
+    pMinEff = g.PMin
+    If pMinEff < 0 Then pMinEff = 0
+    reservePlus = pMaxEff - p0
+    reserveMinus = p0 - pMinEff
+    If reservePlus < 0 Then reservePlus = 0
+    If reserveMinus < 0 Then reserveMinus = 0
+
+    ' Капинг: реально достижимое значение с учётом эксплуатационного диапазона
+    preq = preqOrig
+    If preq > reservePlus Then
+        preq = reservePlus
+        res.Limited = True
+        res.LimitType = "Pmax"
+    ElseIf preq < -reserveMinus Then
+        preq = -reserveMinus
+        res.Limited = True
+        res.LimitType = "Pmin"
+    Else
+        res.Limited = False
+        res.LimitType = ""
+    End If
+
     calcStep = "Расчет фактической мощности"
     pfact = ptek - p0
 
     calcStep = "Количественный критерий"
     If dfr = 0 Then
+        qpct = 100
+        qpass = True
+    ElseIf Abs(preq) < 0.000001 Then
+        ' Pтреб_исх есть, но капинг обнулил: резерв в нужную сторону равен нулю.
+        ' Ничего требовать нельзя - считаем статус ОК (участие ограничено диапазоном).
         qpct = 100
         qpass = True
     ElseIf SgnNZ(pfact) <> SgnNZ(preq) Then
@@ -355,14 +407,42 @@ Private Function AnalyzeOneGenerator(ByVal wsRaw As Worksheet, ByRef st As TSett
     res.Df = df
     res.Dfr = dfr
     res.PReq = preq
+    res.PReqOrig = preqOrig
     res.PFact = pfact
+    res.PMaxEff = pMaxEff
+    res.PMinEff = pMinEff
+    res.ReservePlus = reservePlus
+    res.ReserveMinus = reserveMinus
     res.QuantPct = qpct
     res.QuantPass = qpass
     res.Overshoot = (qpass And qpct > (100# + st.QuantTolPct))
 
+    ' WARN при недостаточном резерве в нужную сторону (порог 5 %Pном)
+    calcStep = "Проверка резерва 5 %Pном"
+    Dim minReservePct As Double, minReserveMW As Double, needSign As Integer
+    minReservePct = 5#
+    minReserveMW = minReservePct / 100# * g.PNom
+    needSign = SgnNZ(preqOrig)
+    If needSign = 1 And reservePlus < minReserveMW Then
+        AppendLog "WARN", g.Station & "/" & g.Generator, _
+                  "Резерв '+' = " & Format(reservePlus, "0.0") & " МВт < " & _
+                  Format(minReserveMW, "0.0") & " МВт (5 %Pном). Возможно ограничение по Pmax."
+    ElseIf needSign = -1 And reserveMinus < minReserveMW Then
+        AppendLog "WARN", g.Station & "/" & g.Generator, _
+                  "Резерв '-' = " & Format(reserveMinus, "0.0") & " МВт < " & _
+                  Format(minReserveMW, "0.0") & " МВт (5 %Pном). Возможно ограничение по Pmin."
+    End If
+    If res.Limited Then
+        AppendLog "INFO", g.Station & "/" & g.Generator, _
+                  "Pтреб ограничен " & res.LimitType & ": было " & Format(preqOrig, "0.000") & _
+                  " МВт, принято " & Format(preq, "0.000") & " МВт."
+    End If
+
     calcStep = "Амплитуда события"
+    ' Амплитуда берётся по исходному (неограниченному) Pтреб - она характеризует
+    ' масштаб возмущения, а не способность генератора его отработать.
     If g.PNom > 0 Then
-        res.AmplPctPnom = 100# * Abs(preq) / g.PNom
+        res.AmplPctPnom = 100# * Abs(preqOrig) / g.PNom
     Else
         res.AmplPctPnom = 0
     End If
@@ -429,7 +509,7 @@ Private Sub EvaluateQualitative(ByVal wsRaw As Worksheet, ByRef st As TSettings,
     ' цели масштабируются к фактическому |Pтреб|, а dP5/dP10 задают пропорции
     ' (например, 5%/10% = 0.5 = половина Pтреб к моменту t5, полный Pтреб к t10).
     ' Для контрольных испытаний (ступень 10 % Pном) это даёт тот же результат,
-    ' т. к. Pтреб = Pном·dp10%/100.
+    ' т. к. Pтреб = Pном * dp10% / 100.
     Dim pReqAbs As Double, ratio5 As Double
     pReqAbs = Abs(res.PReq)
     If g.Dp10Pct > 0 Then
@@ -553,7 +633,7 @@ Private Function ComputeSteadyPReqMean(ByVal wsRaw As Worksheet, ByVal freqCol A
                                         ByVal fNom As Double, ByVal sPct As Double, ByVal pNom As Double, _
                                         ByVal kd As Double, ByVal fnch As Double) As Double
     ' Усреднённый Pтреб(t) за окно [endRow-windowSec ; endRow].
-    ' Pтреб(t) = -100/S · Pном/fном · Kд · dFr(t), где dFr — отклонение за fнч.
+    ' Pтреб(t) = -100/S * Pном/fном * Kd * dFr(t), где dFr - отклонение за fнч.
     Dim startRow As Long, r As Long
     Dim sumP As Double, cnt As Long
     Dim dFr As Double, fv As Double
@@ -697,12 +777,21 @@ Private Sub WriteGeneratorSheet(ByVal wsRaw As Worksheet, ByRef st As TSettings,
     Loop
 
     ' Шапка (колонки A:B и D:E)
+    Dim quantStatusStr As String
+    If res.Limited Then
+        quantStatusStr = "Ограничен " & res.LimitType
+    ElseIf res.QuantPass Then
+        quantStatusStr = "ОК"
+    Else
+        quantStatusStr = "Нарушение"
+    End If
+
     ws.Range("A1:B1").Value = Array("Станция", g.Station)
     ws.Range("A2:B2").Value = Array("Генератор", g.Generator)
     ws.Range("A3:B3").Value = Array("Тип", g.EquipType)
     ws.Range("A4:B4").Value = Array("Старт (расч.)", res.StartTime)
     ws.Range("A5:B5").Value = Array("Выход за fнч", res.FirstExceedTime)
-    ws.Range("A6:B6").Value = Array("Колич. статус", IIf(res.QuantPass, "ОК", "Нарушение"))
+    ws.Range("A6:B6").Value = Array("Колич. статус", quantStatusStr)
     ws.Range("A7:B7").Value = Array("Кач. статус", IIf(res.QualPass, "ОК", "Нарушение"))
     ws.Range("A8:B8").Value = Array("Характер", res.TransientType)
     ws.Range("A9:B9").Value = Array("Амплитуда, %Pном", Round(res.AmplPctPnom, 2))
@@ -716,10 +805,18 @@ Private Sub WriteGeneratorSheet(ByVal wsRaw As Worksheet, ByRef st As TSettings,
     ws.Cells(8, 4).Resize(1, 2).Value = Array("Колич. %", res.QuantPct)
     ws.Cells(9, 4).Resize(1, 2).Value = Array("Экстремумов", res.NumExtrema)
 
-    ws.Range("A11:L11").Value = Array( _
+    ws.Cells(1, 7).Resize(1, 2).Value = Array("Pmax, МВт", res.PMaxEff)
+    ws.Cells(2, 7).Resize(1, 2).Value = Array("Pmin, МВт", res.PMinEff)
+    ws.Cells(3, 7).Resize(1, 2).Value = Array("Резерв '+', МВт", res.ReservePlus)
+    ws.Cells(4, 7).Resize(1, 2).Value = Array("Резерв '-', МВт", res.ReserveMinus)
+    ws.Cells(5, 7).Resize(1, 2).Value = Array("Pтреб исх., МВт", res.PReqOrig)
+    ws.Cells(6, 7).Resize(1, 2).Value = Array("Ограничение", IIf(res.Limited, "Да (" & res.LimitType & ")", "нет"))
+
+    ws.Range("A11:P11").Value = Array( _
         "Время", "Частота, Гц", "P, МВт", "dPфакт, МВт", "Pтреб_накоп, МВт", "dFr, Гц", _
         "Уровень Pтреб", "Уровень +допуск", "Уровень -допуск", _
-        "Маркер t5", "Маркер t10", "Маркер выхода за fнч" _
+        "Маркер t5", "Маркер t10", "Маркер выхода за fнч", _
+        "dPmax", "dPmin", "Зона > Pmax", "Зона < Pmin" _
     )
 
     If st.PreBufferSec > 0 Then
@@ -741,6 +838,17 @@ Private Sub WriteGeneratorSheet(ByVal wsRaw As Worksheet, ByRef st As TSettings,
     If markerSpan <= 0 Then markerSpan = g.PNom * 0.1
     target10Val = targetPreq
 
+    Dim dPmaxRel As Double, dPminRel As Double
+    dPmaxRel = res.PMaxEff - res.P0
+    dPminRel = res.PMinEff - res.P0
+
+    ' Верхняя/нижняя "крышки" для заливки зоны за пределом Pmax/Pmin.
+    ' Размах берём достаточно большой, чтобы область выходила за край оси.
+    Dim outerSpan As Double
+    outerSpan = MaxD(Abs(dPmaxRel), Abs(dPminRel))
+    outerSpan = MaxD(outerSpan, markerSpan) * 1.5
+    If outerSpan <= 0 Then outerSpan = g.PNom
+
     For r = displayStartRow To endRow
         dP = NzD(wsRaw.Cells(r, pCol).Value, 0) - res.P0
         dFr = DeadbandDeviation(NzD(wsRaw.Cells(r, fCol).Value, st.FNom) - st.FNom, g.Fnch)
@@ -754,6 +862,11 @@ Private Sub WriteGeneratorSheet(ByVal wsRaw As Worksheet, ByRef st As TSettings,
         ws.Cells(outR, 7).Value = targetPreq
         ws.Cells(outR, 8).Value = targetPreq + g.SteadyTolPct / 100# * g.PNom
         ws.Cells(outR, 9).Value = targetPreq - g.SteadyTolPct / 100# * g.PNom
+        ws.Cells(outR, 13).Value = dPmaxRel
+        ws.Cells(outR, 14).Value = dPminRel
+        ' Для заливки: область от верхней Pmax до верхней "крышки" и от нижней Pmin до нижней.
+        ws.Cells(outR, 15).Value = outerSpan - dPmaxRel   ' высота столбца "зоны > Pmax"
+        ws.Cells(outR, 16).Value = -outerSpan - dPminRel  ' (отрицательная высота) "зоны < Pmin"
         outR = outR + 1
     Next r
 
@@ -764,7 +877,7 @@ Private Sub WriteGeneratorSheet(ByVal wsRaw As Worksheet, ByRef st As TSettings,
 
     chartEndRow = outR - 1
 
-    ws.Columns("A:L").AutoFit
+    ws.Columns("A:P").AutoFit
     ApplyGeneratorSheetFormats ws
 End Sub
 
@@ -813,9 +926,12 @@ Private Sub ApplyGeneratorSheetFormats(ByVal ws As Worksheet)
     ws.Range("B9").NumberFormat = "0.00"
     ws.Range("D1:D9").NumberFormat = "@"
     ws.Range("E1:E9").NumberFormat = "0.000"
-    ws.Range("A11:L11").NumberFormat = "@"
+    ws.Range("G1:G6").NumberFormat = "@"
+    ws.Range("H1:H5").NumberFormat = "0.000"
+    ws.Range("H6").NumberFormat = "@"
+    ws.Range("A11:P11").NumberFormat = "@"
     ws.Range("A12:A100000").NumberFormat = "dd.mm.yyyy hh:mm:ss"
-    ws.Range("B12:L100000").NumberFormat = "0.000"
+    ws.Range("B12:P100000").NumberFormat = "0.000"
 End Sub
 
 ' ==========================================================
@@ -845,7 +961,7 @@ Private Sub WriteGeneratorChartSheet(ByRef st As TSettings, ByRef g As TGenCfg, 
     wsChart.Range("A1").Font.Bold = True
     wsChart.Range("A1").Font.Size = 14
 
-    ' Блок «Вывод»
+    ' Блок "Вывод"
     WriteChartVerdictBlock wsChart, g, res, st
 
     lastDataRow = wsData.Cells(wsData.Rows.Count, 1).End(xlUp).Row
@@ -871,6 +987,8 @@ Private Sub WriteGeneratorChartSheet(ByRef st As TSettings, ByRef g As TGenCfg, 
     AddSeries chartObj.Chart, wsData, startDataRow, endChartDataRow, 1, 7, "Pтреб (уровень)", False
     AddSeries chartObj.Chart, wsData, startDataRow, endChartDataRow, 1, 8, "+Допуск уст.", False
     AddSeries chartObj.Chart, wsData, startDataRow, endChartDataRow, 1, 9, "-Допуск уст.", False
+    AddLimitLineSeries chartObj.Chart, wsData, startDataRow, endChartDataRow, 1, 13, "Pmax (dPmax)"
+    AddLimitLineSeries chartObj.Chart, wsData, startDataRow, endChartDataRow, 1, 14, "Pmin (dPmin)"
     AddSeries chartObj.Chart, wsData, startDataRow, endChartDataRow, 1, 2, "Частота, Гц", True
 
     ' Вертикальные маркеры t5 / t10 / выхода за fнч - через отдельные "точечные" ряды
@@ -890,8 +1008,17 @@ Private Sub WriteGeneratorChartSheet(ByRef st As TSettings, ByRef g As TGenCfg, 
 End Sub
 
 Private Sub WriteChartVerdictBlock(ByVal wsChart As Worksheet, ByRef g As TGenCfg, ByRef res As TGenResult, ByRef st As TSettings)
+    Dim quantCell As String
+    If res.Limited Then
+        quantCell = "Ограничен " & res.LimitType & " (" & Format(res.QuantPct, "0") & " % от доступного)"
+    ElseIf res.QuantPass Then
+        quantCell = "ОК (" & Format(res.QuantPct, "0") & " %)"
+    Else
+        quantCell = "Нарушение (" & Format(res.QuantPct, "0") & " %)"
+    End If
+
     wsChart.Range("A3").Value = "Количественный:"
-    wsChart.Range("B3").Value = IIf(res.QuantPass, "ОК", "Нарушение") & " (" & Format(res.QuantPct, "0") & " %)"
+    wsChart.Range("B3").Value = quantCell
     wsChart.Range("D3").Value = "Амплитуда:"
     wsChart.Range("E3").Value = Format(res.AmplPctPnom, "0.0") & " %Pном" & IIf(Len(res.AmplitudeTag) > 0, " / " & res.AmplitudeTag, "")
 
@@ -910,10 +1037,24 @@ Private Sub WriteChartVerdictBlock(ByVal wsChart As Worksheet, ByRef g As TGenCf
     wsChart.Range("D6").Value = "Проваленные подп.:"
     wsChart.Range("E6").Value = IIf(Len(res.QualFailedList) > 0, res.QualFailedList, "-")
 
-    wsChart.Range("A3:A6").Font.Bold = True
-    wsChart.Range("D3:D6").Font.Bold = True
-    wsChart.Range("A3:E6").NumberFormat = "@"
-    If Not res.QuantPass Then wsChart.Range("B3").Font.Color = RGB(192, 0, 0)
+    wsChart.Range("A7").Value = "Pmax / Pmin, МВт:"
+    wsChart.Range("B7").Value = Format(res.PMaxEff, "0.0") & " / " & Format(res.PMinEff, "0.0") & _
+                                " (резерв +" & Format(res.ReservePlus, "0.0") & " / -" & _
+                                Format(res.ReserveMinus, "0.0") & ")"
+    wsChart.Range("D7").Value = "Pтреб (исх / прим.):"
+    wsChart.Range("E7").Value = Format(res.PReqOrig, "0.000") & " / " & Format(res.PReq, "0.000") & _
+                                IIf(res.Limited, " (ограничен " & res.LimitType & ")", "")
+
+    wsChart.Range("A3:A7").Font.Bold = True
+    wsChart.Range("D3:D7").Font.Bold = True
+    wsChart.Range("A3:E7").NumberFormat = "@"
+    If res.Limited Then
+        wsChart.Range("B3").Font.Color = RGB(156, 87, 0)
+        wsChart.Range("B3").Interior.Color = RGB(255, 235, 156)
+        wsChart.Range("E7").Font.Color = RGB(156, 87, 0)
+    ElseIf Not res.QuantPass Then
+        wsChart.Range("B3").Font.Color = RGB(192, 0, 0)
+    End If
     If Not res.QualPass Then wsChart.Range("B4").Font.Color = RGB(192, 0, 0)
     If res.TransientType = "Колебательный" Then wsChart.Range("B5").Font.Color = RGB(192, 0, 0)
 End Sub
@@ -1015,12 +1156,17 @@ Private Sub BuildOneStationAggregate(ByVal wsRaw As Worksheet, ByVal wsCfg As Wo
     Dim cfgLast As Long, r As Long, cnt As Long
     Dim g As TGenCfg
     Dim pCols() As Long, fnchArr() As Double, sArr() As Double, kdArr() As Double, pnomArr() As Double
+    Dim pmaxArr() As Double, pminArr() As Double
     Dim freqCol As Long, timeCol As Long
     Dim shName As String, ws As Worksheet
     Dim startRow As Long, endRow As Long, rowQ As Long, firstExceedRow As Long
-    Dim p0 As Double, pNow As Double, preq As Double, pfact As Double, dF As Double
+    Dim p0 As Double, pNow As Double, preq As Double, preqOrig As Double
+    Dim pfact As Double, dF As Double
     Dim i As Long, dfr As Double
     Dim suffix As String
+    Dim pMaxSum As Double, pMinSum As Double
+    Dim reservePlus As Double, reserveMinus As Double
+    Dim limited As Boolean, limitType As String
 
     cfgLast = LastUsedRow(wsCfg)
     timeCol = FindHeaderCol(wsRaw, "Время")
@@ -1039,12 +1185,16 @@ Private Sub BuildOneStationAggregate(ByVal wsRaw As Worksheet, ByVal wsCfg As Wo
                     ReDim Preserve sArr(1 To cnt)
                     ReDim Preserve kdArr(1 To cnt)
                     ReDim Preserve pnomArr(1 To cnt)
+                    ReDim Preserve pmaxArr(1 To cnt)
+                    ReDim Preserve pminArr(1 To cnt)
                     pCols(cnt) = FindHeaderCol(wsRaw, g.PowerHeader)
                     If pCols(cnt) = 0 Then cnt = cnt - 1: GoTo NextCfg
                     fnchArr(cnt) = g.Fnch
                     sArr(cnt) = g.SPct
                     kdArr(cnt) = g.Kd
                     pnomArr(cnt) = g.PNom
+                    pmaxArr(cnt) = g.PMax
+                    pminArr(cnt) = g.PMin
                     If freqCol = 0 Then freqCol = FindHeaderCol(wsRaw, g.FreqHeader)
                 End If
             End If
@@ -1058,9 +1208,13 @@ NextCfg:
     endRow = RowByTimeOffset(wsRaw, timeCol, startRow, st.QuantIntervalSec)
 
     p0 = 0
+    pMaxSum = 0
+    pMinSum = 0
     For i = 1 To cnt
         If NzD(wsRaw.Cells(startRow, pCols(i)).Value, 0) > st.WorkThresholdMW Then
             p0 = p0 + NzD(wsRaw.Cells(startRow, pCols(i)).Value, 0)
+            pMaxSum = pMaxSum + pmaxArr(i)
+            pMinSum = pMinSum + pminArr(i)
         End If
     Next i
 
@@ -1072,12 +1226,31 @@ NextCfg:
     Next i
 
     dF = MaxAbsDeviationInWindow(wsRaw, freqCol, startRow, endRow, st.FNom)
-    preq = 0
+    preqOrig = 0
     For i = 1 To cnt
         dfr = DeadbandDeviation(dF, fnchArr(i))
-        preq = preq + (-100# / sArr(i) * pnomArr(i) / st.FNom * kdArr(i) * dfr)
+        preqOrig = preqOrig + (-100# / sArr(i) * pnomArr(i) / st.FNom * kdArr(i) * dfr)
     Next i
+
+    reservePlus = pMaxSum - p0
+    reserveMinus = p0 - pMinSum
+    If reservePlus < 0 Then reservePlus = 0
+    If reserveMinus < 0 Then reserveMinus = 0
+    preq = preqOrig
+    limited = False
+    limitType = ""
+    If preq > reservePlus Then
+        preq = reservePlus: limited = True: limitType = "Pmax"
+    ElseIf preq < -reserveMinus Then
+        preq = -reserveMinus: limited = True: limitType = "Pmin"
+    End If
     pfact = pNow - p0
+
+    If limited Then
+        AppendLog "INFO", stationName & IIf(Len(paropipeFilter) > 0, "/" & paropipeFilter, ""), _
+                  "Pтреб_сум ограничен " & limitType & ": было " & Format(preqOrig, "0.000") & _
+                  " МВт, принято " & Format(preq, "0.000") & " МВт."
+    End If
 
     If Len(paropipeFilter) > 0 Then
         suffix = "_Сумма_" & paropipeFilter
@@ -1105,8 +1278,20 @@ NextCfg:
     ws.Range("A7:B7").Value = Array("Pтреб, МВт", preq)
     ws.Range("A8:B8").Value = Array("Pфакт, МВт", pfact)
 
-    ws.Range("A10:E10").Value = Array("Время", "Частота, Гц", "Pсум, МВт", "dPсум, МВт", "Pтреб_сум, МВт")
+    ws.Cells(1, 4).Resize(1, 2).Value = Array("Pmax_сум, МВт", pMaxSum)
+    ws.Cells(2, 4).Resize(1, 2).Value = Array("Pmin_сум, МВт", pMinSum)
+    ws.Cells(3, 4).Resize(1, 2).Value = Array("Резерв '+', МВт", reservePlus)
+    ws.Cells(4, 4).Resize(1, 2).Value = Array("Резерв '-', МВт", reserveMinus)
+    ws.Cells(5, 4).Resize(1, 2).Value = Array("Pтреб исх., МВт", preqOrig)
+    ws.Cells(6, 4).Resize(1, 2).Value = Array("Ограничение", IIf(limited, "Да (" & limitType & ")", "нет"))
+    ws.Cells(7, 4).Resize(1, 2).Value = Array("Генераторов в сумме", cnt)
+
+    ws.Range("A10:I10").Value = Array("Время", "Частота, Гц", "Pсум, МВт", "dPсум, МВт", "Pтреб_сум, МВт", _
+                                       "dPmax_сум", "dPmin_сум", "Уровень Pтреб_прим", "Pтреб исх.")
     rowQ = 11
+    Dim dPmaxRel As Double, dPminRel As Double
+    dPmaxRel = pMaxSum - p0
+    dPminRel = pMinSum - p0
     For r = startRow To endRow
         ws.Cells(rowQ, 1).Value = wsRaw.Cells(r, timeCol).Value
         ws.Cells(rowQ, 2).Value = wsRaw.Cells(r, freqCol).Value
@@ -1121,23 +1306,32 @@ NextCfg:
         ws.Cells(rowQ, 3).Value = pNow
         ws.Cells(rowQ, 4).Value = pNow - p0
 
-        preq = 0
+        Dim preqStep As Double
+        preqStep = 0
         For i = 1 To cnt
             dfr = DeadbandDeviation(NzD(wsRaw.Cells(r, freqCol).Value, st.FNom) - st.FNom, fnchArr(i))
-            preq = preq + (-100# / sArr(i) * pnomArr(i) / st.FNom * kdArr(i) * dfr)
+            preqStep = preqStep + (-100# / sArr(i) * pnomArr(i) / st.FNom * kdArr(i) * dfr)
         Next i
-        ws.Cells(rowQ, 5).Value = preq
+        ws.Cells(rowQ, 5).Value = preqStep
+        ws.Cells(rowQ, 6).Value = dPmaxRel
+        ws.Cells(rowQ, 7).Value = dPminRel
+        ws.Cells(rowQ, 8).Value = preq       ' константа = ограниченная (применённая) цель
+        ws.Cells(rowQ, 9).Value = preqOrig   ' константа = исходная (неограниченная) цель
         rowQ = rowQ + 1
     Next r
 
-    ws.Columns("A:E").AutoFit
+    ws.Columns("A:I").AutoFit
     ws.Range("A1:A8").NumberFormat = "@"
     ws.Range("B1:B2").NumberFormat = "@"
     ws.Range("B3:B4").NumberFormat = "dd.mm.yyyy hh:mm:ss"
     ws.Range("B5:B8").NumberFormat = "0.000"
-    ws.Range("A10:E10").NumberFormat = "@"
+    ws.Range("D1:D7").NumberFormat = "@"
+    ws.Range("E1:E5").NumberFormat = "0.000"
+    ws.Range("E6").NumberFormat = "@"
+    ws.Range("E7").NumberFormat = "0"
+    ws.Range("A10:I10").NumberFormat = "@"
     ws.Range("A11:A100000").NumberFormat = "dd.mm.yyyy hh:mm:ss"
-    ws.Range("B11:E100000").NumberFormat = "0.000"
+    ws.Range("B11:I100000").NumberFormat = "0.000"
 
     WriteStationChartSheet stationName, paropipeFilter, rowQ - 1, st, MinArray(fnchArr), dF
 End Sub
@@ -1190,6 +1384,8 @@ Private Sub WriteStationChartSheet(ByVal stationName As String, ByVal paropipeFi
 
     AddSeries chartObj.Chart, wsData, startRow, endRow, 1, 4, "dPсум, МВт", False
     AddSeries chartObj.Chart, wsData, startRow, endRow, 1, 5, "Pтреб_сум, МВт", False
+    AddLimitLineSeries chartObj.Chart, wsData, startRow, endRow, 1, 6, "Pmax_сум (dPmax)"
+    AddLimitLineSeries chartObj.Chart, wsData, startRow, endRow, 1, 7, "Pmin_сум (dPmin)"
     AddSeries chartObj.Chart, wsData, startRow, endRow, 1, 2, "Частота, Гц", True
 
     On Error Resume Next
@@ -1210,23 +1406,37 @@ End Sub
 Private Sub WriteSummaryRow(ByVal ws As Worksheet, ByVal r As Long, ByRef g As TGenCfg, ByRef res As TGenResult)
     Dim note As String
     Dim overshootStr As String
+    Dim quantStatusStr As String, limitStr As String
     note = ""
-    If Not res.QuantPass Then note = "Колич. критерий не выполнен"
+    If res.Limited Then
+        quantStatusStr = "Ограничен " & res.LimitType
+        limitStr = res.LimitType
+    ElseIf res.QuantPass Then
+        quantStatusStr = "ОК"
+        limitStr = ""
+    Else
+        quantStatusStr = "Нарушение"
+        limitStr = ""
+    End If
+
+    If Not res.QuantPass And Not res.Limited Then note = "Колич. критерий не выполнен"
+    If res.Limited Then note = Trim$(note & "; Pтреб ограничен " & res.LimitType)
     If Abs(res.P0) < 0.001 And Abs(res.PFact) < 0.001 Then note = "Нет первичного отклика; проверьте генератор/датчик"
     If Len(res.AmplitudeTag) > 0 And res.AmplitudeTag = "Слабое" Then _
         note = Trim$(note & "; Слабое возмущение (< 3 %Pном)")
     If Len(res.AmplitudeTag) > 0 And res.AmplitudeTag = "Избыточное" Then _
         note = Trim$(note & "; Возмущение > 10 %Pном (вне нормативного диапазона)")
+    If Len(note) > 0 And Left$(note, 2) = "; " Then note = Mid$(note, 3)
     overshootStr = IIf(res.Overshoot, "Да", "")
 
-    ws.Cells(r, 1).Resize(1, 29).Value = Array( _
+    ws.Cells(r, 1).Resize(1, 35).Value = Array( _
         g.Station, g.Generator, g.EquipType, _
         res.StartTime, res.FirstExceedTime, _
         res.P0, res.PTek, res.PsteadyAvg, _
         res.Df, res.Dfr, _
         res.PReq, res.PFact, _
         Round(res.AmplPctPnom, 2), res.AmplitudeTag, _
-        res.QuantPct, IIf(res.QuantPass, "ОК", "Нарушение"), overshootStr, _
+        res.QuantPct, quantStatusStr, overshootStr, _
         res.TransientType, res.NumExtrema, _
         IIf(res.QualPass, "ОК", "Нарушение"), _
         IIf(res.QualT5Pass, "ОК", "Нарушение"), _
@@ -1234,14 +1444,18 @@ Private Sub WriteSummaryRow(ByVal ws As Worksheet, ByVal r As Long, ByRef g As T
         IIf(res.QualSteadyPass, "ОК", "Нарушение"), _
         res.QualFailedList, _
         FormatSecOrNA(res.T5FactSec), FormatSecOrNA(res.T10FactSec), _
-        GeneratorSheetName(g), GeneratorChartSheetName(g), note _
+        GeneratorSheetName(g), GeneratorChartSheetName(g), _
+        res.PMaxEff, res.PMinEff, res.ReservePlus, res.ReserveMinus, _
+        res.PReqOrig, limitStr, _
+        note _
     )
 End Sub
 
 Private Sub WriteSummaryInvalid(ByVal ws As Worksheet, ByVal r As Long, ByRef g As TGenCfg)
-    ws.Cells(r, 1).Resize(1, 29).Value = Array( _
+    ws.Cells(r, 1).Resize(1, 35).Value = Array( _
         g.Station, g.Generator, g.EquipType, "", "", "", "", "", "", "", "", "", "", "", "", _
         "Нарушение", "", "", 0, "Н/Д", "Н/Д", "Н/Д", "Н/Д", "", "", "", "Config", "", _
+        "", "", "", "", "", "", _
         "Не заполнен обязательный параметр config" _
     )
 End Sub
@@ -1251,7 +1465,7 @@ Private Sub ApplySummaryConditionalFormat(ByVal ws As Worksheet)
     Dim rng As Range
     lastRow = ws.Cells(ws.Rows.Count, 1).End(xlUp).Row
     If lastRow < 2 Then Exit Sub
-    ws.Range("A2:AC" & lastRow).Interior.Pattern = xlNone
+    ws.Range("A2:AI" & lastRow).Interior.Pattern = xlNone
 
     ' Колонки текстовых статусов: P, Q, T, U, V, W (колич/перерег/кач/t5/t10/уст)
     ApplyStatusCF ws, ws.Range("P2:P" & lastRow), "ОК", "Нарушение"
@@ -1259,6 +1473,25 @@ Private Sub ApplySummaryConditionalFormat(ByVal ws As Worksheet)
     ApplyStatusCF ws, ws.Range("U2:U" & lastRow), "ОК", "Нарушение"
     ApplyStatusCF ws, ws.Range("V2:V" & lastRow), "ОК", "Нарушение"
     ApplyStatusCF ws, ws.Range("W2:W" & lastRow), "ОК", "Нарушение"
+
+    ' Количественный статус P: 'Ограничен' -> жёлтым
+    Set rng = ws.Range("P2:P" & lastRow)
+    With rng.FormatConditions.Add(Type:=xlTextString, String:="Ограничен", TextOperator:=xlContains)
+        .Interior.Color = RGB(255, 235, 156)
+        .Font.Color = RGB(156, 87, 0)
+    End With
+
+    ' Ограничение AH (34): любой непустой текст -> жёлтым
+    Set rng = ws.Range("AH2:AH" & lastRow)
+    rng.FormatConditions.Delete
+    With rng.FormatConditions.Add(Type:=xlTextString, String:="Pmax", TextOperator:=xlContains)
+        .Interior.Color = RGB(255, 235, 156)
+        .Font.Color = RGB(156, 87, 0)
+    End With
+    With rng.FormatConditions.Add(Type:=xlTextString, String:="Pmin", TextOperator:=xlContains)
+        .Interior.Color = RGB(255, 235, 156)
+        .Font.Color = RGB(156, 87, 0)
+    End With
 
     ' Перерегулирование (Q) - желтый при "Да"
     Set rng = ws.Range("Q2:Q" & lastRow)
@@ -1307,8 +1540,8 @@ Private Sub ApplySummaryConditionalFormat(ByVal ws As Worksheet)
         .ColorScaleCriteria(3).FormatColor.Color = RGB(248, 105, 107)
     End With
 
-    ws.Range("A1:AC1").Font.Bold = True
-    ws.Range("A1:AC1").Interior.Color = RGB(217, 225, 242)
+    ws.Range("A1:AI1").Font.Bold = True
+    ws.Range("A1:AI1").Interior.Color = RGB(217, 225, 242)
 End Sub
 
 Private Sub ApplyStatusCF(ByVal ws As Worksheet, ByVal rng As Range, ByVal okText As String, ByVal badText As String)
@@ -1325,7 +1558,7 @@ End Sub
 
 Private Sub WriteVersionStamp(ByVal wsSummary As Worksheet, ByVal wsRaw As Worksheet, ByVal t0Run As Double)
     Dim col As Long
-    col = 31   ' колонка AE - правее данных Summary
+    col = 37   ' колонка AK - правее данных Summary (после AI)
     wsSummary.Cells(1, col).Value = "Мониторинг ОПРЧ"
     wsSummary.Cells(2, col).Value = "Версия"
     wsSummary.Cells(2, col + 1).Value = OPRCH_VERSION
@@ -1425,6 +1658,13 @@ Private Sub ValidateInputs(ByVal wsRaw As Worksheet, ByVal wsCfg As Worksheet, B
         If g.Fnch < 0 Or g.Fnch > 0.5 Then AppendLog "WARN", g.Station & "/" & g.Generator, "fнч вне [0..0.5] Гц: " & g.Fnch
         If g.Kd < 0.1 Or g.Kd > 1 Then AppendLog "WARN", g.Station & "/" & g.Generator, "Kд вне [0.1..1]: " & g.Kd
         If g.T10Sec < g.T5Sec Then AppendLog "WARN", g.Station & "/" & g.Generator, "t10 < t5 (" & g.T10Sec & " < " & g.T5Sec & ")"
+        ' Pmax/Pmin
+        If g.PMax > 0 And g.PMax < g.PMin Then _
+            AppendLog "WARN", g.Station & "/" & g.Generator, "Pmax < Pmin (" & g.PMax & " < " & g.PMin & ")"
+        If g.PMax > 0 And g.PNom > 0 And g.PMax > 1.3 * g.PNom Then _
+            AppendLog "WARN", g.Station & "/" & g.Generator, "Pmax > 1.3*Pном (проверьте ед. измерения)"
+        If g.PMin < 0 Then _
+            AppendLog "WARN", g.Station & "/" & g.Generator, "Pmin < 0: " & g.PMin
         ' Паропровод: все или никто в рамках станции
         If g.InStationSum Then
             If stationParopipe.Exists(g.Station) Then
@@ -1449,16 +1689,23 @@ End Sub
 
 Private Function ReadSettings(ByVal wsCfg As Worksheet) As TSettings
     Dim st As TSettings
-    st.FNom = NzD(wsCfg.Cells(2, 21).Value, 50#)
-    st.AutoStart = (NzD(wsCfg.Cells(4, 21).Value, 1) <> 0)
-    st.QuantIntervalSec = NzD(wsCfg.Cells(5, 21).Value, 82#)
-    st.QuantTolPct = NzD(wsCfg.Cells(6, 21).Value, 10#)
-    st.WorkThresholdMW = NzD(wsCfg.Cells(7, 21).Value, 1#)
-    st.PreBufferSec = NzD(wsCfg.Cells(8, 21).Value, 5#)
-    st.ChartIntervalSec = NzD(wsCfg.Cells(9, 21).Value, 120#)
-    st.SteadyWindowSec = NzD(wsCfg.Cells(10, 21).Value, 30#)
-    If IsDate(wsCfg.Cells(3, 21).Value) Then
-        st.EventStart = CDate(wsCfg.Cells(3, 21).Value)
+    Dim valCol As Long
+    ' В 1.4.0 глобальные настройки перенесены в колонки W/X (23/24),
+    ' чтобы освободить T/U для Pmax/Pmin у генераторов.
+    ' Старые книги (до 1.3.x) продолжаем читать по адресу T/U (20/21),
+    ' если W пустой.
+    valCol = 24
+    If Trim$(CStr(wsCfg.Cells(2, 23).Value)) = "" Then valCol = 21
+    st.FNom = NzD(wsCfg.Cells(2, valCol).Value, 50#)
+    st.AutoStart = (NzD(wsCfg.Cells(4, valCol).Value, 1) <> 0)
+    st.QuantIntervalSec = NzD(wsCfg.Cells(5, valCol).Value, 82#)
+    st.QuantTolPct = NzD(wsCfg.Cells(6, valCol).Value, 10#)
+    st.WorkThresholdMW = NzD(wsCfg.Cells(7, valCol).Value, 1#)
+    st.PreBufferSec = NzD(wsCfg.Cells(8, valCol).Value, 5#)
+    st.ChartIntervalSec = NzD(wsCfg.Cells(9, valCol).Value, 120#)
+    st.SteadyWindowSec = NzD(wsCfg.Cells(10, valCol).Value, 30#)
+    If IsDate(wsCfg.Cells(3, valCol).Value) Then
+        st.EventStart = CDate(wsCfg.Cells(3, valCol).Value)
     Else
         st.EventStart = 0
     End If
@@ -1486,6 +1733,20 @@ Private Function ReadGenCfg(ByVal ws As Worksheet, ByVal r As Long) As TGenCfg
     g.InStationSum = (NzD(ws.Cells(r, 17).Value, 0) <> 0)
     g.CheckSteady = (NzD(ws.Cells(r, 18).Value, 1) <> 0)
     g.Paroprovod = Trim$(CStr(ws.Cells(r, 19).Value))
+    ' Pmax/Pmin: пусто = значения по умолчанию (Pmax=Pном, Pmin=0)
+    If Trim$(CStr(ws.Cells(r, 20).Value)) = "" Then
+        g.PMax = g.PNom
+    Else
+        g.PMax = NzD(ws.Cells(r, 20).Value, g.PNom)
+    End If
+    If Trim$(CStr(ws.Cells(r, 21).Value)) = "" Then
+        g.PMin = 0
+    Else
+        g.PMin = NzD(ws.Cells(r, 21).Value, 0)
+    End If
+    If g.PMax <= 0 Then g.PMax = g.PNom
+    If g.PMin < 0 Then g.PMin = 0
+    If g.PMax < g.PMin Then g.PMax = g.PMin
 
     pr = GetPreset(g.EquipType)
     If g.T5Sec <= 0 Then g.T5Sec = pr.T5Sec
@@ -1649,6 +1910,23 @@ Private Sub AddMarkerSeries(ByVal ch As Chart, ByVal ws As Worksheet, ByVal r1 A
     s.ChartType = xlLine
     s.Format.Line.Weight = 1.25
     s.Format.Line.DashStyle = msoLineDash
+    s.MarkerStyle = xlMarkerStyleNone
+    On Error GoTo 0
+End Sub
+
+Private Sub AddLimitLineSeries(ByVal ch As Chart, ByVal ws As Worksheet, ByVal r1 As Long, ByVal r2 As Long, _
+                               ByVal xCol As Long, ByVal yCol As Long, ByVal nm As String)
+    ' Горизонтальные уровни Pmax / Pmin: красная жирная пунктирная линия без маркеров.
+    Dim s As Series
+    Set s = ch.SeriesCollection.NewSeries
+    s.Name = nm
+    s.XValues = ws.Range(ws.Cells(r1, xCol), ws.Cells(r2, xCol))
+    s.Values = ws.Range(ws.Cells(r1, yCol), ws.Cells(r2, yCol))
+    On Error Resume Next
+    s.ChartType = xlLine
+    s.Format.Line.Weight = 1.75
+    s.Format.Line.DashStyle = msoLineLongDash
+    s.Format.Line.ForeColor.RGB = RGB(192, 0, 0)
     s.MarkerStyle = xlMarkerStyleNone
     On Error GoTo 0
 End Sub
