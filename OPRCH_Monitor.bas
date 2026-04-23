@@ -18,7 +18,7 @@ Option Explicit
 '     ГТУ / ПГУ_утил / ПГУ_сбросн / ГПА) подставляются при пустых ячейках.
 ' ==========================================================
 
-Public Const OPRCH_VERSION As String = "1.3.0"
+Public Const OPRCH_VERSION As String = "1.3.1"
 
 Private Const SH_RAW As String = "RawData"
 Private Const SH_CFG As String = "Config"
@@ -82,6 +82,7 @@ Private Type TGenResult
     Overshoot As Boolean
     TransientType As String
     NumExtrema As Long
+    PReqSteady As Double
     QualPass As Boolean
     QualT5Pass As Boolean
     QualT10Pass As Boolean
@@ -424,8 +425,20 @@ Private Sub EvaluateQualitative(ByVal wsRaw As Worksheet, ByRef st As TSettings,
     End If
 
     qStep = "Целевые ступени dP5/dP10"
-    target5 = signReq * g.PNom * g.Dp5Pct / 100#
-    target10 = signReq * g.PNom * g.Dp10Pct / 100#
+    ' Корректная методика для мониторинга реальных событий:
+    ' цели масштабируются к фактическому |Pтреб|, а dP5/dP10 задают пропорции
+    ' (например, 5%/10% = 0.5 = половина Pтреб к моменту t5, полный Pтреб к t10).
+    ' Для контрольных испытаний (ступень 10 % Pном) это даёт тот же результат,
+    ' т. к. Pтреб = Pном·dp10%/100.
+    Dim pReqAbs As Double, ratio5 As Double
+    pReqAbs = Abs(res.PReq)
+    If g.Dp10Pct > 0 Then
+        ratio5 = g.Dp5Pct / g.Dp10Pct
+    Else
+        ratio5 = 0.5
+    End If
+    target5 = signReq * pReqAbs * ratio5
+    target10 = signReq * pReqAbs
 
     row5 = 0
     row10 = 0
@@ -468,10 +481,16 @@ Private Sub EvaluateQualitative(ByVal wsRaw As Worksheet, ByRef st As TSettings,
     res.PsteadyAvg = steadyMean
     steadyTolMW = g.SteadyTolPct / 100# * g.PNom
 
+    ' В реальных событиях частота может восстановиться к концу качественного окна.
+    ' Поэтому цель установившегося = среднее Pтреб(t) в том же хвостовом окне.
+    ' Если частота вернулась, Pтреб_ср близок к нулю и генератор тоже должен вернуться к P0.
+    res.PReqSteady = ComputeSteadyPReqMean(wsRaw, fCol, timeCol, res.EndQualRow, _
+                                           st.SteadyWindowSec, st.FNom, g.SPct, g.PNom, g.Kd, g.Fnch)
+
     res.QualT5Pass = (hit5 And t5 <= g.T5Sec)
     res.QualT10Pass = (hit10 And t10 <= g.T10Sec)
     If g.CheckSteady Then
-        res.QualSteadyPass = (Abs((steadyMean - res.P0) - target10) <= steadyTolMW)
+        res.QualSteadyPass = (Abs((steadyMean - res.P0) - res.PReqSteady) <= steadyTolMW)
     Else
         res.QualSteadyPass = True
     End If
@@ -479,15 +498,16 @@ Private Sub EvaluateQualitative(ByVal wsRaw As Worksheet, ByRef st As TSettings,
     reason = ""
     failed = ""
     If Not res.QualT5Pass Then
-        reason = reason & "Не достигнут dP5 в t5; "
+        reason = reason & "Не достигнута 1-я ступень (" & Format(ratio5 * 100#, "0") & " % Pтреб) к t5=" & g.T5Sec & "c; "
         failed = failed & "t5; "
     End If
     If Not res.QualT10Pass Then
-        reason = reason & "Не достигнут dP10 в t10; "
+        reason = reason & "Не достигнут Pтреб к t10=" & g.T10Sec & "c; "
         failed = failed & "t10; "
     End If
     If g.CheckSteady And (Not res.QualSteadyPass) Then
-        reason = reason & "Отклонение установившегося от цели > допуска; "
+        reason = reason & "Установившееся отклонение от Pтреб_ср (" & Format(res.PReqSteady, "0.000") _
+                        & ") выходит за допуск ±" & Format(steadyTolMW, "0.000") & " МВт; "
         failed = failed & "уст; "
     End If
     If Not g.CheckSteady Then reason = reason & "Контроль установившегося отключен; "
@@ -526,6 +546,31 @@ Private Function ComputeSteadyMean(ByVal wsRaw As Worksheet, ByVal pCol As Long,
         End If
     Next r
     If cnt > 0 Then ComputeSteadyMean = sumP / cnt Else ComputeSteadyMean = 0
+End Function
+
+Private Function ComputeSteadyPReqMean(ByVal wsRaw As Worksheet, ByVal freqCol As Long, ByVal timeCol As Long, _
+                                        ByVal endRow As Long, ByVal windowSec As Double, _
+                                        ByVal fNom As Double, ByVal sPct As Double, ByVal pNom As Double, _
+                                        ByVal kd As Double, ByVal fnch As Double) As Double
+    ' Усреднённый Pтреб(t) за окно [endRow-windowSec ; endRow].
+    ' Pтреб(t) = -100/S · Pном/fном · Kд · dFr(t), где dFr — отклонение за fнч.
+    Dim startRow As Long, r As Long
+    Dim sumP As Double, cnt As Long
+    Dim dFr As Double, fv As Double
+    If windowSec <= 0 Then windowSec = 30
+    If sPct <= 0 Then Exit Function
+    startRow = RowByTimeOffset(wsRaw, timeCol, endRow, -windowSec)
+    If startRow < 2 Then startRow = 2
+    If startRow >= endRow Then startRow = endRow
+    For r = startRow To endRow
+        If IsNumeric(wsRaw.Cells(r, freqCol).Value) Then
+            fv = CDbl(wsRaw.Cells(r, freqCol).Value) - fNom
+            dFr = DeadbandDeviation(fv, fnch)
+            sumP = sumP + (-100# / sPct * pNom / fNom * kd * dFr)
+            cnt = cnt + 1
+        End If
+    Next r
+    If cnt > 0 Then ComputeSteadyPReqMean = sumP / cnt Else ComputeSteadyPReqMean = 0
 End Function
 
 ' ==========================================================
@@ -687,14 +732,14 @@ Private Sub WriteGeneratorSheet(ByVal wsRaw As Worksheet, ByRef st As TSettings,
     endRow = RowByTimeOffset(wsRaw, timeCol, res.StartRow, MaxD(st.QuantIntervalSec, g.T10Sec))
     outR = 12
 
-    ' Уровни для маркеров
+    ' Уровни для маркеров. Целевой уровень = Pтреб (масштабируется к событию).
     signReq = SgnNZ(res.PReq)
-    If signReq <> 0 Then
-        target10Val = signReq * g.PNom * g.Dp10Pct / 100#
-    Else
-        target10Val = 0
-    End If
     targetPreq = res.PReq
+    ' Для вертикальных маркеров подбираем достаточный размах, чтобы линия была видна
+    Dim markerSpan As Double
+    markerSpan = MaxD(Abs(res.PReq) * 1.5, g.PNom * g.Dp10Pct / 100#)
+    If markerSpan <= 0 Then markerSpan = g.PNom * 0.1
+    target10Val = targetPreq
 
     For r = displayStartRow To endRow
         dP = NzD(wsRaw.Cells(r, pCol).Value, 0) - res.P0
@@ -707,15 +752,15 @@ Private Sub WriteGeneratorSheet(ByVal wsRaw As Worksheet, ByRef st As TSettings,
         ws.Cells(outR, 5).Value = -100# / g.SPct * g.PNom / st.FNom * g.Kd * dFr
         ws.Cells(outR, 6).Value = dFr
         ws.Cells(outR, 7).Value = targetPreq
-        ws.Cells(outR, 8).Value = target10Val + g.SteadyTolPct / 100# * g.PNom
-        ws.Cells(outR, 9).Value = target10Val - g.SteadyTolPct / 100# * g.PNom
+        ws.Cells(outR, 8).Value = targetPreq + g.SteadyTolPct / 100# * g.PNom
+        ws.Cells(outR, 9).Value = targetPreq - g.SteadyTolPct / 100# * g.PNom
         outR = outR + 1
     Next r
 
     ' Маркеры t5 / t10 / выхода за fнч - две точки на линии (нижний и верхний уровень)
-    FillMarkerColumn ws, displayStartRow, endRow, wsRaw, timeCol, res.StartRow, g.T5Sec, 10, target10Val, -target10Val
-    FillMarkerColumn ws, displayStartRow, endRow, wsRaw, timeCol, res.StartRow, g.T10Sec, 11, target10Val, -target10Val
-    FillMarkerColumnAtTime ws, displayStartRow, endRow, wsRaw, timeCol, res.FirstExceedTime, 12, target10Val, -target10Val
+    FillMarkerColumn ws, displayStartRow, endRow, wsRaw, timeCol, res.StartRow, g.T5Sec, 10, markerSpan, -markerSpan
+    FillMarkerColumn ws, displayStartRow, endRow, wsRaw, timeCol, res.StartRow, g.T10Sec, 11, markerSpan, -markerSpan
+    FillMarkerColumnAtTime ws, displayStartRow, endRow, wsRaw, timeCol, res.FirstExceedTime, 12, markerSpan, -markerSpan
 
     chartEndRow = outR - 1
 
@@ -861,7 +906,7 @@ Private Sub WriteChartVerdictBlock(ByVal wsChart As Worksheet, ByRef g As TGenCf
     wsChart.Range("E5").Value = IIf(res.Overshoot, "Да", "нет")
 
     wsChart.Range("A6").Value = "Уст_сред, МВт:"
-    wsChart.Range("B6").Value = Format(res.PsteadyAvg, "0.000") & " (цель " & Format(res.P0 + SgnNZ(res.PReq) * g.PNom * g.Dp10Pct / 100#, "0.000") & ")"
+    wsChart.Range("B6").Value = Format(res.PsteadyAvg, "0.000") & " (цель " & Format(res.P0 + res.PReqSteady, "0.000") & ")"
     wsChart.Range("D6").Value = "Проваленные подп.:"
     wsChart.Range("E6").Value = IIf(Len(res.QualFailedList) > 0, res.QualFailedList, "-")
 
