@@ -812,11 +812,11 @@ Private Sub WriteGeneratorSheet(ByVal wsRaw As Worksheet, ByRef st As TSettings,
     ws.Cells(5, 7).Resize(1, 2).Value = Array("Pтреб исх., МВт", res.PReqOrig)
     ws.Cells(6, 7).Resize(1, 2).Value = Array("Ограничение", IIf(res.Limited, "Да (" & res.LimitType & ")", "нет"))
 
-    ws.Range("A11:P11").Value = Array( _
+    ws.Range("A11:N11").Value = Array( _
         "Время", "Частота, Гц", "P, МВт", "dPфакт, МВт", "Pтреб_накоп, МВт", "dFr, Гц", _
         "Уровень Pтреб", "Уровень +допуск", "Уровень -допуск", _
         "Маркер t5", "Маркер t10", "Маркер выхода за fнч", _
-        "dPmax", "dPmin", "Зона > Pmax", "Зона < Pmin" _
+        "dPmax", "dPmin" _
     )
 
     If st.PreBufferSec > 0 Then
@@ -832,22 +832,16 @@ Private Sub WriteGeneratorSheet(ByVal wsRaw As Worksheet, ByRef st As TSettings,
     ' Уровни для маркеров. Целевой уровень = Pтреб (масштабируется к событию).
     signReq = SgnNZ(res.PReq)
     targetPreq = res.PReq
-    ' Для вертикальных маркеров подбираем достаточный размах, чтобы линия была видна
+    ' Для вертикальных маркеров подбираем достаточный размах, чтобы линия была видна.
+    ' Берём не меньше размаха Pmax/Pmin, чтобы маркер пересекал обе границы.
     Dim markerSpan As Double
-    markerSpan = MaxD(Abs(res.PReq) * 1.5, g.PNom * g.Dp10Pct / 100#)
-    If markerSpan <= 0 Then markerSpan = g.PNom * 0.1
-    target10Val = targetPreq
-
     Dim dPmaxRel As Double, dPminRel As Double
     dPmaxRel = res.PMaxEff - res.P0
     dPminRel = res.PMinEff - res.P0
-
-    ' Верхняя/нижняя "крышки" для заливки зоны за пределом Pmax/Pmin.
-    ' Размах берём достаточно большой, чтобы область выходила за край оси.
-    Dim outerSpan As Double
-    outerSpan = MaxD(Abs(dPmaxRel), Abs(dPminRel))
-    outerSpan = MaxD(outerSpan, markerSpan) * 1.5
-    If outerSpan <= 0 Then outerSpan = g.PNom
+    markerSpan = MaxD(Abs(res.PReq) * 1.5, g.PNom * g.Dp10Pct / 100#)
+    markerSpan = MaxD(markerSpan, MaxD(Abs(dPmaxRel), Abs(dPminRel)))
+    If markerSpan <= 0 Then markerSpan = g.PNom * 0.1
+    target10Val = targetPreq
 
     For r = displayStartRow To endRow
         dP = NzD(wsRaw.Cells(r, pCol).Value, 0) - res.P0
@@ -864,9 +858,6 @@ Private Sub WriteGeneratorSheet(ByVal wsRaw As Worksheet, ByRef st As TSettings,
         ws.Cells(outR, 9).Value = targetPreq - g.SteadyTolPct / 100# * g.PNom
         ws.Cells(outR, 13).Value = dPmaxRel
         ws.Cells(outR, 14).Value = dPminRel
-        ' Для заливки: область от верхней Pmax до верхней "крышки" и от нижней Pmin до нижней.
-        ws.Cells(outR, 15).Value = outerSpan - dPmaxRel   ' высота столбца "зоны > Pmax"
-        ws.Cells(outR, 16).Value = -outerSpan - dPminRel  ' (отрицательная высота) "зоны < Pmin"
         outR = outR + 1
     Next r
 
@@ -877,7 +868,7 @@ Private Sub WriteGeneratorSheet(ByVal wsRaw As Worksheet, ByRef st As TSettings,
 
     chartEndRow = outR - 1
 
-    ws.Columns("A:P").AutoFit
+    ws.Columns("A:N").AutoFit
     ApplyGeneratorSheetFormats ws
 End Sub
 
@@ -929,9 +920,9 @@ Private Sub ApplyGeneratorSheetFormats(ByVal ws As Worksheet)
     ws.Range("G1:G6").NumberFormat = "@"
     ws.Range("H1:H5").NumberFormat = "0.000"
     ws.Range("H6").NumberFormat = "@"
-    ws.Range("A11:P11").NumberFormat = "@"
+    ws.Range("A11:N11").NumberFormat = "@"
     ws.Range("A12:A100000").NumberFormat = "dd.mm.yyyy hh:mm:ss"
-    ws.Range("B12:P100000").NumberFormat = "0.000"
+    ws.Range("B12:N100000").NumberFormat = "0.000"
 End Sub
 
 ' ==========================================================
@@ -1286,8 +1277,8 @@ NextCfg:
     ws.Cells(6, 4).Resize(1, 2).Value = Array("Ограничение", IIf(limited, "Да (" & limitType & ")", "нет"))
     ws.Cells(7, 4).Resize(1, 2).Value = Array("Генераторов в сумме", cnt)
 
-    ws.Range("A10:I10").Value = Array("Время", "Частота, Гц", "Pсум, МВт", "dPсум, МВт", "Pтреб_сум, МВт", _
-                                       "dPmax_сум", "dPmin_сум", "Уровень Pтреб_прим", "Pтреб исх.")
+    ws.Range("A10:G10").Value = Array("Время", "Частота, Гц", "Pсум, МВт", "dPсум, МВт", "Pтреб_сум, МВт", _
+                                       "dPmax_сум", "dPmin_сум")
     rowQ = 11
     Dim dPmaxRel As Double, dPminRel As Double
     dPmaxRel = pMaxSum - p0
@@ -1315,12 +1306,10 @@ NextCfg:
         ws.Cells(rowQ, 5).Value = preqStep
         ws.Cells(rowQ, 6).Value = dPmaxRel
         ws.Cells(rowQ, 7).Value = dPminRel
-        ws.Cells(rowQ, 8).Value = preq       ' константа = ограниченная (применённая) цель
-        ws.Cells(rowQ, 9).Value = preqOrig   ' константа = исходная (неограниченная) цель
         rowQ = rowQ + 1
     Next r
 
-    ws.Columns("A:I").AutoFit
+    ws.Columns("A:G").AutoFit
     ws.Range("A1:A8").NumberFormat = "@"
     ws.Range("B1:B2").NumberFormat = "@"
     ws.Range("B3:B4").NumberFormat = "dd.mm.yyyy hh:mm:ss"
@@ -1329,9 +1318,9 @@ NextCfg:
     ws.Range("E1:E5").NumberFormat = "0.000"
     ws.Range("E6").NumberFormat = "@"
     ws.Range("E7").NumberFormat = "0"
-    ws.Range("A10:I10").NumberFormat = "@"
+    ws.Range("A10:G10").NumberFormat = "@"
     ws.Range("A11:A100000").NumberFormat = "dd.mm.yyyy hh:mm:ss"
-    ws.Range("B11:I100000").NumberFormat = "0.000"
+    ws.Range("B11:G100000").NumberFormat = "0.000"
 
     WriteStationChartSheet stationName, paropipeFilter, rowQ - 1, st, MinArray(fnchArr), dF
 End Sub
