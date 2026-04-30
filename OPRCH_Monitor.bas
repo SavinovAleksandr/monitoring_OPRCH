@@ -32,6 +32,7 @@ Private Const SH_LOG As String = "Log"
 Private Const CHART_SUFFIX As String = "_Граф"
 
 Private m_LogRow As Long
+Private m_KdProfiles As Object   ' key=EQUIPTYPE, value=Array(t0,m0,t1,m1,t2,m2)
 
 Private Type TSettings
     FNom As Double
@@ -105,6 +106,8 @@ Private Type TGenResult
     ReserveMinus As Double  ' располагаемый резерв '-' = max(0, P0 - PMin)
     Limited As Boolean      ' Pтреб был ограничен диапазоном
     LimitType As String     ' 'Pmax' или 'Pmin'
+    KdUsedQuant As Double   ' Kд, принятый в количественном расчёте
+    KdProfile As String     ' справка по применённому профилю Kд(t)
 End Type
 
 ' ==========================================================
@@ -152,7 +155,16 @@ Public Sub SetupOPRCHTemplate()
     wsCfg.Cells(9, 23).Resize(1, 2).Value = Array("Интервал графика, с", 120)
     wsCfg.Cells(10, 23).Resize(1, 2).Value = Array("Окно установив., с", 30)
 
-    wsCfg.Columns("A:Y").AutoFit
+    wsCfg.Range("AA1").Value = "Профили Kд(t)"
+    wsCfg.Range("AA2:AG2").Value = Array("Тип_оборудования", "t0, с", "k0", "t1, с", "k1", "t2, с", "k2")
+    wsCfg.Cells(3, 27).Resize(1, 7).Value = Array("ПТУ_блок", 0, 1, 4, 0.8, 30, 0.5)
+    wsCfg.Cells(4, 27).Resize(1, 7).Value = Array("ПТУ_неблок", 0, 1, 4, 0.8, 30, 0.5)
+    wsCfg.Cells(5, 27).Resize(1, 7).Value = Array("ГТУ", 0, 1, 15, 0.9, 60, 0.7)
+    wsCfg.Cells(6, 27).Resize(1, 7).Value = Array("ПГУ_утил", 0, 1, 30, 0.75, 120, 0.5)
+    wsCfg.Cells(7, 27).Resize(1, 7).Value = Array("ПГУ_сбросн", 0, 1, 30, 0.7, 180, 0.4)
+    wsCfg.Cells(8, 27).Resize(1, 7).Value = Array("ГПА", 0, 1, 10, 0.9, 30, 0.8)
+
+    wsCfg.Columns("A:AG").AutoFit
     wsRaw.Columns("A:E").AutoFit
     EnsureControlButtons wsCfg
 
@@ -178,6 +190,7 @@ Public Sub AnalyzeOPRCH()
 
     stepName = "Чтение настроек"
     st = ReadSettings(wsCfg)
+    LoadKdProfiles wsCfg
     timeCol = FindHeaderCol(wsRaw, "Время")
     If timeCol = 0 Then Err.Raise vbObjectError + 2001, , "В RawData не найдена колонка 'Время'."
 
@@ -314,6 +327,7 @@ Private Function AnalyzeOneGenerator(ByVal wsRaw As Worksheet, ByRef st As TSett
     Dim timeCol As Long, pCol As Long, fCol As Long
     Dim startRow As Long, endQ As Long, endQual As Long, firstExceedRow As Long
     Dim p0 As Double, ptek As Double, df As Double, dfr As Double, preq As Double, pfact As Double
+    Dim kdQuant As Double, tQuantSec As Double
     Dim qpct As Double, qpass As Boolean
     Dim calcStep As String
 
@@ -340,8 +354,10 @@ Private Function AnalyzeOneGenerator(ByVal wsRaw As Worksheet, ByRef st As TSett
 
     calcStep = "Расчет требуемой мощности"
     Dim preqOrig As Double
+    tQuantSec = SecBetween(wsRaw.Cells(startRow, timeCol).Value, wsRaw.Cells(endQ, timeCol).Value)
+    kdQuant = DynamicKdByTime(g.EquipType, tQuantSec, g.Kd)
     If dfr <> 0 Then
-        preqOrig = -100# / g.SPct * g.PNom / st.FNom * g.Kd * dfr
+        preqOrig = -100# / g.SPct * g.PNom / st.FNom * kdQuant * dfr
     Else
         preqOrig = 0
     End If
@@ -409,6 +425,8 @@ Private Function AnalyzeOneGenerator(ByVal wsRaw As Worksheet, ByRef st As TSett
     res.PReq = preq
     res.PReqOrig = preqOrig
     res.PFact = pfact
+    res.KdUsedQuant = kdQuant
+    res.KdProfile = KdProfileText(g.EquipType, g.Kd)
     res.PMaxEff = pMaxEff
     res.PMinEff = pMinEff
     res.ReservePlus = reservePlus
@@ -565,7 +583,8 @@ Private Sub EvaluateQualitative(ByVal wsRaw As Worksheet, ByRef st As TSettings,
     ' Поэтому цель установившегося = среднее Pтреб(t) в том же хвостовом окне.
     ' Если частота вернулась, Pтреб_ср близок к нулю и генератор тоже должен вернуться к P0.
     res.PReqSteady = ComputeSteadyPReqMean(wsRaw, fCol, timeCol, res.EndQualRow, _
-                                           st.SteadyWindowSec, st.FNom, g.SPct, g.PNom, g.Kd, g.Fnch)
+                                           st.SteadyWindowSec, st.FNom, g.SPct, g.PNom, g.Kd, g.Fnch, _
+                                           g.EquipType, wsRaw.Cells(res.StartRow, timeCol).Value)
 
     res.QualT5Pass = (hit5 And t5 <= g.T5Sec)
     res.QualT10Pass = (hit10 And t10 <= g.T10Sec)
@@ -631,12 +650,13 @@ End Function
 Private Function ComputeSteadyPReqMean(ByVal wsRaw As Worksheet, ByVal freqCol As Long, ByVal timeCol As Long, _
                                         ByVal endRow As Long, ByVal windowSec As Double, _
                                         ByVal fNom As Double, ByVal sPct As Double, ByVal pNom As Double, _
-                                        ByVal kd As Double, ByVal fnch As Double) As Double
+                                        ByVal kd As Double, ByVal fnch As Double, _
+                                        ByVal equipType As String, ByVal tStart As Variant) As Double
     ' Усреднённый Pтреб(t) за окно [endRow-windowSec ; endRow].
     ' Pтреб(t) = -100/S * Pном/fном * Kd * dFr(t), где dFr - отклонение за fнч.
     Dim startRow As Long, r As Long
     Dim sumP As Double, cnt As Long
-    Dim dFr As Double, fv As Double
+    Dim dFr As Double, fv As Double, kdEff As Double, tSec As Double
     If windowSec <= 0 Then windowSec = 30
     If sPct <= 0 Then Exit Function
     startRow = RowByTimeOffset(wsRaw, timeCol, endRow, -windowSec)
@@ -646,7 +666,9 @@ Private Function ComputeSteadyPReqMean(ByVal wsRaw As Worksheet, ByVal freqCol A
         If IsNumeric(wsRaw.Cells(r, freqCol).Value) Then
             fv = CDbl(wsRaw.Cells(r, freqCol).Value) - fNom
             dFr = DeadbandDeviation(fv, fnch)
-            sumP = sumP + (-100# / sPct * pNom / fNom * kd * dFr)
+            tSec = SecBetween(tStart, wsRaw.Cells(r, timeCol).Value)
+            kdEff = DynamicKdByTime(equipType, tSec, kd)
+            sumP = sumP + (-100# / sPct * pNom / fNom * kdEff * dFr)
             cnt = cnt + 1
         End If
     Next r
@@ -763,6 +785,7 @@ Private Sub WriteGeneratorSheet(ByVal wsRaw As Worksheet, ByRef st As TSettings,
     Dim displayStartRow As Long, chartEndRow As Long
     Dim target5Val As Double, target10Val As Double
     Dim targetPreq As Double
+    Dim tolPreq As Double
     Dim signReq As Integer
 
     timeCol = FindHeaderCol(wsRaw, "Время")
@@ -811,12 +834,17 @@ Private Sub WriteGeneratorSheet(ByVal wsRaw As Worksheet, ByRef st As TSettings,
     ws.Cells(4, 7).Resize(1, 2).Value = Array("Резерв '-', МВт", res.ReserveMinus)
     ws.Cells(5, 7).Resize(1, 2).Value = Array("Pтреб исх., МВт", res.PReqOrig)
     ws.Cells(6, 7).Resize(1, 2).Value = Array("Ограничение", IIf(res.Limited, "Да (" & res.LimitType & ")", "нет"))
+    ws.Cells(7, 7).Resize(1, 2).Value = Array("Kд (колич.), факт", res.KdUsedQuant)
+    ws.Cells(8, 7).Resize(1, 2).Value = Array("Профиль Kд(t)", res.KdProfile)
 
-    ws.Range("A11:N11").Value = Array( _
+    ws.Range("A11:V11").Value = Array( _
         "Время", "Частота, Гц", "P, МВт", "dPфакт, МВт", "Pтреб_накоп, МВт", "dFr, Гц", _
-        "Уровень Pтреб", "Уровень +допуск", "Уровень -допуск", _
+        "", "Уровень +допуск", "Уровень -допуск", _
         "Маркер t5", "Маркер t10", "Маркер выхода за fнч", _
-        "dPmax", "dPmin" _
+        "dPmax", "dPmin", _
+        "Pтреб_абс, МВт", "Уровень +допуск_абс", "Уровень -допуск_абс", _
+        "Pmax, МВт", "Pmin, МВт", _
+        "Маркер t5_абс", "Маркер t10_абс", "Маркер fнч_абс" _
     )
 
     If st.PreBufferSec > 0 Then
@@ -832,15 +860,20 @@ Private Sub WriteGeneratorSheet(ByVal wsRaw As Worksheet, ByRef st As TSettings,
     ' Уровни для маркеров. Целевой уровень = Pтреб (масштабируется к событию).
     signReq = SgnNZ(res.PReq)
     targetPreq = res.PReq
+    tolPreq = g.PNom * 0.01
     ' Для вертикальных маркеров подбираем достаточный размах, чтобы линия была видна.
     ' Берём не меньше размаха Pmax/Pmin, чтобы маркер пересекал обе границы.
-    Dim markerSpan As Double
+    Dim markerSpan As Double, markerSpanAbs As Double
     Dim dPmaxRel As Double, dPminRel As Double
+    Dim markerHiAbs As Double, markerLoAbs As Double
     dPmaxRel = res.PMaxEff - res.P0
     dPminRel = res.PMinEff - res.P0
     markerSpan = MaxD(Abs(res.PReq) * 1.5, g.PNom * g.Dp10Pct / 100#)
     markerSpan = MaxD(markerSpan, MaxD(Abs(dPmaxRel), Abs(dPminRel)))
     If markerSpan <= 0 Then markerSpan = g.PNom * 0.1
+    markerSpanAbs = markerSpan
+    markerHiAbs = res.P0 + markerSpanAbs
+    markerLoAbs = res.P0 - markerSpanAbs
     target10Val = targetPreq
 
     For r = displayStartRow To endRow
@@ -853,11 +886,15 @@ Private Sub WriteGeneratorSheet(ByVal wsRaw As Worksheet, ByRef st As TSettings,
         ws.Cells(outR, 4).Value = dP
         ws.Cells(outR, 5).Value = -100# / g.SPct * g.PNom / st.FNom * g.Kd * dFr
         ws.Cells(outR, 6).Value = dFr
-        ws.Cells(outR, 7).Value = targetPreq
-        ws.Cells(outR, 8).Value = targetPreq + g.SteadyTolPct / 100# * g.PNom
-        ws.Cells(outR, 9).Value = targetPreq - g.SteadyTolPct / 100# * g.PNom
+        ws.Cells(outR, 8).Value = targetPreq + tolPreq
+        ws.Cells(outR, 9).Value = targetPreq - tolPreq
         ws.Cells(outR, 13).Value = dPmaxRel
         ws.Cells(outR, 14).Value = dPminRel
+        ws.Cells(outR, 15).Value = res.P0 + targetPreq
+        ws.Cells(outR, 16).Value = res.P0 + targetPreq + tolPreq
+        ws.Cells(outR, 17).Value = res.P0 + targetPreq - tolPreq
+        ws.Cells(outR, 18).Value = res.PMaxEff
+        ws.Cells(outR, 19).Value = res.PMinEff
         outR = outR + 1
     Next r
 
@@ -865,10 +902,13 @@ Private Sub WriteGeneratorSheet(ByVal wsRaw As Worksheet, ByRef st As TSettings,
     FillMarkerColumn ws, displayStartRow, endRow, wsRaw, timeCol, res.StartRow, g.T5Sec, 10, markerSpan, -markerSpan
     FillMarkerColumn ws, displayStartRow, endRow, wsRaw, timeCol, res.StartRow, g.T10Sec, 11, markerSpan, -markerSpan
     FillMarkerColumnAtTime ws, displayStartRow, endRow, wsRaw, timeCol, res.FirstExceedTime, 12, markerSpan, -markerSpan
+    FillMarkerColumn ws, displayStartRow, endRow, wsRaw, timeCol, res.StartRow, g.T5Sec, 20, markerHiAbs, markerLoAbs
+    FillMarkerColumn ws, displayStartRow, endRow, wsRaw, timeCol, res.StartRow, g.T10Sec, 21, markerHiAbs, markerLoAbs
+    FillMarkerColumnAtTime ws, displayStartRow, endRow, wsRaw, timeCol, res.FirstExceedTime, 22, markerHiAbs, markerLoAbs
 
     chartEndRow = outR - 1
 
-    ws.Columns("A:N").AutoFit
+    ws.Columns("A:V").AutoFit
     ApplyGeneratorSheetFormats ws
 End Sub
 
@@ -917,12 +957,14 @@ Private Sub ApplyGeneratorSheetFormats(ByVal ws As Worksheet)
     ws.Range("B9").NumberFormat = "0.00"
     ws.Range("D1:D9").NumberFormat = "@"
     ws.Range("E1:E9").NumberFormat = "0.000"
-    ws.Range("G1:G6").NumberFormat = "@"
+    ws.Range("G1:G8").NumberFormat = "@"
     ws.Range("H1:H5").NumberFormat = "0.000"
     ws.Range("H6").NumberFormat = "@"
-    ws.Range("A11:N11").NumberFormat = "@"
+    ws.Range("H7").NumberFormat = "0.000"
+    ws.Range("H8").NumberFormat = "@"
+    ws.Range("A11:V11").NumberFormat = "@"
     ws.Range("A12:A100000").NumberFormat = "dd.mm.yyyy hh:mm:ss"
-    ws.Range("B12:N100000").NumberFormat = "0.000"
+    ws.Range("B12:V100000").NumberFormat = "0.000"
 End Sub
 
 ' ==========================================================
@@ -936,6 +978,8 @@ Private Sub WriteGeneratorChartSheet(ByRef st As TSettings, ByRef g As TGenCfg, 
     Dim chartObj As ChartObject
     Dim startDataRow As Long, endChartDataRow As Long
     Dim ySpan As Double
+    Dim yMin As Double, yMax As Double, yPad As Double
+    Dim farPos As Double, farNeg As Double, farAbs As Double
 
     dataSheet = GeneratorSheetName(g)
     chartSheet = GeneratorChartSheetName(g)
@@ -962,20 +1006,19 @@ Private Sub WriteGeneratorChartSheet(ByRef st As TSettings, ByRef g As TGenCfg, 
     endChartDataRow = FindChartEndRow(wsData, 12, lastDataRow, res.StartTime, st.ChartIntervalSec)
     If endChartDataRow < startDataRow Then endChartDataRow = lastDataRow
 
-    Set chartObj = wsChart.ChartObjects.Add(10, 140, 1020, 480)
+    Set chartObj = wsChart.ChartObjects.Add(10, 140, 1020, 360)
     With chartObj.Chart
         .ChartType = xlLine
         .HasTitle = True
         .ChartTitle.Text = "Мониторинг ОПРЧ: " & g.Station & " / " & g.Generator
         On Error Resume Next
-        .Axes(xlCategory).CategoryType = xlCategoryScale
+        .Axes(xlCategory).CategoryType = xlTimeScale
         On Error GoTo 0
     End With
 
     ' Основные ряды
     AddSeries chartObj.Chart, wsData, startDataRow, endChartDataRow, 1, 4, "Pфакт, МВт", False
     AddSeries chartObj.Chart, wsData, startDataRow, endChartDataRow, 1, 5, "Pтреб, МВт", False
-    AddSeries chartObj.Chart, wsData, startDataRow, endChartDataRow, 1, 7, "Pтреб (уровень)", False
     AddSeries chartObj.Chart, wsData, startDataRow, endChartDataRow, 1, 8, "+Допуск уст.", False
     AddSeries chartObj.Chart, wsData, startDataRow, endChartDataRow, 1, 9, "-Допуск уст.", False
     AddLimitLineSeries chartObj.Chart, wsData, startDataRow, endChartDataRow, 1, 13, "Pmax (dPmax)"
@@ -988,6 +1031,68 @@ Private Sub WriteGeneratorChartSheet(ByRef st As TSettings, ByRef g As TGenCfg, 
     AddMarkerSeries chartObj.Chart, wsData, startDataRow, endChartDataRow, 1, 12, "Выход за fнч"
 
     On Error Resume Next
+    GetRangeMinMaxByCols wsData, startDataRow, endChartDataRow, Array(4, 5, 8, 9, 13, 14), yMin, yMax
+    farPos = MaxAbsInCols(wsData, startDataRow, endChartDataRow, Array(4, 5), True)
+    farNeg = MaxAbsInCols(wsData, startDataRow, endChartDataRow, Array(4, 5), False)
+    farAbs = MaxD(farPos, farNeg)
+    If farAbs > 0 Then
+        If farPos >= farNeg Then
+            yMax = MaxD(yMax, farPos * 1.05)
+        Else
+            yMin = -MaxD(Abs(yMin), farNeg * 1.05)
+        End If
+    End If
+    yPad = MaxD((yMax - yMin) * 0.1, g.PNom * 0.01)
+    If yPad <= 0 Then yPad = 0.5
+    chartObj.Chart.Axes(xlValue, xlPrimary).MinimumScale = yMin - yPad
+    chartObj.Chart.Axes(xlValue, xlPrimary).MaximumScale = yMax + yPad
+    chartObj.Chart.Axes(xlCategory).TickLabels.NumberFormat = "hh:mm:ss"
+    With chartObj.Chart.Axes(xlValue, xlSecondary)
+        ySpan = MaxD(Abs(res.Df) * 1.2, 2# * g.Fnch)
+        If ySpan < 0.1 Then ySpan = 0.1
+        .MinimumScale = st.FNom - ySpan
+        .MaximumScale = st.FNom + ySpan
+    End With
+    On Error GoTo 0
+
+    ' Второй график: абсолютные единицы (P, МВт и f, Гц)
+    Set chartObj = wsChart.ChartObjects.Add(10, 520, 1020, 360)
+    With chartObj.Chart
+        .ChartType = xlLine
+        .HasTitle = True
+        .ChartTitle.Text = "Мониторинг ОПРЧ (абсолютные): " & g.Station & " / " & g.Generator
+        On Error Resume Next
+        .Axes(xlCategory).CategoryType = xlTimeScale
+        On Error GoTo 0
+    End With
+
+    AddSeries chartObj.Chart, wsData, startDataRow, endChartDataRow, 1, 3, "Pфакт, МВт", False
+    AddSeries chartObj.Chart, wsData, startDataRow, endChartDataRow, 1, 15, "Pтреб, МВт (абс)", False
+    AddSeries chartObj.Chart, wsData, startDataRow, endChartDataRow, 1, 16, "+Допуск уст., МВт (абс)", False
+    AddSeries chartObj.Chart, wsData, startDataRow, endChartDataRow, 1, 17, "-Допуск уст., МВт (абс)", False
+    AddLimitLineSeries chartObj.Chart, wsData, startDataRow, endChartDataRow, 1, 18, "Pmax, МВт"
+    AddLimitLineSeries chartObj.Chart, wsData, startDataRow, endChartDataRow, 1, 19, "Pmin, МВт"
+    AddSeries chartObj.Chart, wsData, startDataRow, endChartDataRow, 1, 2, "Частота, Гц", True
+    AddMarkerSeries chartObj.Chart, wsData, startDataRow, endChartDataRow, 1, 20, "t5 (абс)")
+    AddMarkerSeries chartObj.Chart, wsData, startDataRow, endChartDataRow, 1, 21, "t10 (абс)")
+    AddMarkerSeries chartObj.Chart, wsData, startDataRow, endChartDataRow, 1, 22, "Выход за fнч (абс)")
+
+    On Error Resume Next
+    GetRangeMinMaxByCols wsData, startDataRow, endChartDataRow, Array(3, 15, 16, 17, 18, 19), yMin, yMax
+    farPos = MaxAbsInCols(wsData, startDataRow, endChartDataRow, Array(3, 15), True)
+    farNeg = MaxAbsInCols(wsData, startDataRow, endChartDataRow, Array(3, 15), False)
+    farAbs = MaxD(farPos, farNeg)
+    If farAbs > 0 Then
+        If farPos >= farNeg Then
+            yMax = MaxD(yMax, farPos * 1.05)
+        Else
+            yMin = -MaxD(Abs(yMin), farNeg * 1.05)
+        End If
+    End If
+    yPad = MaxD((yMax - yMin) * 0.08, g.PNom * 0.005)
+    If yPad <= 0 Then yPad = 1
+    chartObj.Chart.Axes(xlValue, xlPrimary).MinimumScale = yMin - yPad
+    chartObj.Chart.Axes(xlValue, xlPrimary).MaximumScale = yMax + yPad
     chartObj.Chart.Axes(xlCategory).TickLabels.NumberFormat = "hh:mm:ss"
     With chartObj.Chart.Axes(xlValue, xlSecondary)
         ySpan = MaxD(Abs(res.Df) * 1.2, 2# * g.Fnch)
@@ -997,6 +1102,59 @@ Private Sub WriteGeneratorChartSheet(ByRef st As TSettings, ByRef g As TGenCfg, 
     End With
     On Error GoTo 0
 End Sub
+
+Private Sub GetRangeMinMaxByCols(ByVal ws As Worksheet, ByVal r1 As Long, ByVal r2 As Long, _
+                                 ByVal cols As Variant, ByRef outMin As Double, ByRef outMax As Double)
+    Dim i As Long, r As Long, c As Long, v As Variant
+    Dim inited As Boolean
+    inited = False
+    For i = LBound(cols) To UBound(cols)
+        c = CLng(cols(i))
+        For r = r1 To r2
+            v = ws.Cells(r, c).Value
+            If IsNumeric(v) Then
+                If Not inited Then
+                    outMin = CDbl(v)
+                    outMax = CDbl(v)
+                    inited = True
+                Else
+                    If CDbl(v) < outMin Then outMin = CDbl(v)
+                    If CDbl(v) > outMax Then outMax = CDbl(v)
+                End If
+            End If
+        Next r
+    Next i
+    If Not inited Then
+        outMin = 0
+        outMax = 1
+    End If
+    If outMax < outMin Then
+        outMax = outMin + 1
+    ElseIf Abs(outMax - outMin) < 0.000001 Then
+        outMax = outMax + 1
+        outMin = outMin - 1
+    End If
+End Sub
+
+Private Function MaxAbsInCols(ByVal ws As Worksheet, ByVal r1 As Long, ByVal r2 As Long, _
+                              ByVal cols As Variant, ByVal positiveSide As Boolean) As Double
+    Dim i As Long, r As Long, c As Long
+    Dim v As Variant, vv As Double
+    For i = LBound(cols) To UBound(cols)
+        c = CLng(cols(i))
+        For r = r1 To r2
+            v = ws.Cells(r, c).Value
+            If IsNumeric(v) Then
+                vv = CDbl(v)
+                If positiveSide Then
+                    If vv > MaxAbsInCols Then MaxAbsInCols = vv
+                Else
+                    If -vv > MaxAbsInCols Then MaxAbsInCols = -vv
+                End If
+            End If
+        Next r
+    Next i
+End Function
 
 Private Sub WriteChartVerdictBlock(ByVal wsChart As Worksheet, ByRef g As TGenCfg, ByRef res As TGenResult, ByRef st As TSettings)
     Dim quantCell As String
@@ -1036,9 +1194,12 @@ Private Sub WriteChartVerdictBlock(ByVal wsChart As Worksheet, ByRef g As TGenCf
     wsChart.Range("E7").Value = Format(res.PReqOrig, "0.000") & " / " & Format(res.PReq, "0.000") & _
                                 IIf(res.Limited, " (ограничен " & res.LimitType & ")", "")
 
-    wsChart.Range("A3:A7").Font.Bold = True
+    wsChart.Range("A8").Value = "Kд(t):"
+    wsChart.Range("B8").Value = Format(res.KdUsedQuant, "0.000") & " / " & res.KdProfile
+
+    wsChart.Range("A3:A8").Font.Bold = True
     wsChart.Range("D3:D7").Font.Bold = True
-    wsChart.Range("A3:E7").NumberFormat = "@"
+    wsChart.Range("A3:E8").NumberFormat = "@"
     If res.Limited Then
         wsChart.Range("B3").Font.Color = RGB(156, 87, 0)
         wsChart.Range("B3").Interior.Color = RGB(255, 235, 156)
@@ -1367,7 +1528,7 @@ Private Sub WriteStationChartSheet(ByVal stationName As String, ByVal paropipeFi
         .HasTitle = True
         .ChartTitle.Text = "Суммарный мониторинг ОПРЧ: " & stationName & IIf(Len(paropipeFilter) > 0, " / " & paropipeFilter, "")
         On Error Resume Next
-        .Axes(xlCategory).CategoryType = xlCategoryScale
+        .Axes(xlCategory).CategoryType = xlTimeScale
         On Error GoTo 0
     End With
 
@@ -1461,7 +1622,18 @@ Private Sub ApplySummaryConditionalFormat(ByVal ws As Worksheet)
     ApplyStatusCF ws, ws.Range("T2:T" & lastRow), "ОК", "Нарушение"
     ApplyStatusCF ws, ws.Range("U2:U" & lastRow), "ОК", "Нарушение"
     ApplyStatusCF ws, ws.Range("V2:V" & lastRow), "ОК", "Нарушение"
-    ApplyStatusCF ws, ws.Range("W2:W" & lastRow), "ОК", "Нарушение"
+    
+    ' Кач.уст (W): "Нарушение" подсвечиваем как замечание (оранжевым), не красным.
+    Set rng = ws.Range("W2:W" & lastRow)
+    rng.FormatConditions.Delete
+    With rng.FormatConditions.Add(Type:=xlTextString, String:="Нарушение", TextOperator:=xlContains)
+        .Interior.Color = RGB(255, 235, 156)
+        .Font.Color = RGB(156, 87, 0)
+    End With
+    With rng.FormatConditions.Add(Type:=xlTextString, String:="ОК", TextOperator:=xlContains)
+        .Interior.Color = RGB(198, 239, 206)
+        .Font.Color = RGB(0, 97, 0)
+    End With
 
     ' Количественный статус P: 'Ограничен' -> жёлтым
     Set rng = ws.Range("P2:P" & lastRow)
@@ -1929,6 +2101,98 @@ Private Function AmplitudeTag(ByVal amplPct As Double, ByVal isEvent As Boolean)
     Else
         AmplitudeTag = "Норма"
     End If
+End Function
+
+Private Sub LoadKdProfiles(ByVal wsCfg As Worksheet)
+    Dim r As Long, lastR As Long
+    Dim et As String
+    Dim t0 As Double, t1 As Double, t2 As Double
+    Dim k0 As Double, k1 As Double, k2 As Double
+    Set m_KdProfiles = CreateObject("Scripting.Dictionary")
+    lastR = LastUsedRow(wsCfg)
+    For r = 3 To lastR
+        et = UCase$(Trim$(CStr(wsCfg.Cells(r, 27).Value)))
+        If Len(et) = 0 Then GoTo NX
+        t0 = NzD(wsCfg.Cells(r, 28).Value, 0)
+        k0 = NzD(wsCfg.Cells(r, 29).Value, 1)
+        t1 = NzD(wsCfg.Cells(r, 30).Value, 0)
+        k1 = NzD(wsCfg.Cells(r, 31).Value, 1)
+        t2 = NzD(wsCfg.Cells(r, 32).Value, 0)
+        k2 = NzD(wsCfg.Cells(r, 33).Value, 1)
+        m_KdProfiles(et) = Array(t0, k0, t1, k1, t2, k2)
+NX:
+    Next r
+End Sub
+
+Private Function GetDefaultKdProfile(ByVal equipType As String) As Variant
+    Dim et As String
+    et = UCase$(Trim$(equipType))
+    If InStr(et, "ПТУ_БЛОК") > 0 Then
+        GetDefaultKdProfile = Array(0#, 1#, 4#, 0.8, 30#, 0.5)
+    ElseIf InStr(et, "ПТУ_НЕБЛОК") > 0 Or InStr(et, "ПТУ") > 0 Then
+        GetDefaultKdProfile = Array(0#, 1#, 4#, 0.8, 30#, 0.5)
+    ElseIf InStr(et, "ГТУ") > 0 Then
+        GetDefaultKdProfile = Array(0#, 1#, 15#, 0.9, 60#, 0.7)
+    ElseIf InStr(et, "ПГУ_УТИЛ") > 0 Or InStr(et, "УТИЛ") > 0 Then
+        GetDefaultKdProfile = Array(0#, 1#, 30#, 0.75, 120#, 0.5)
+    ElseIf InStr(et, "ПГУ_СБРОСН") > 0 Or InStr(et, "СБРОСН") > 0 Then
+        GetDefaultKdProfile = Array(0#, 1#, 30#, 0.7, 180#, 0.4)
+    ElseIf InStr(et, "ГПА") > 0 Then
+        GetDefaultKdProfile = Array(0#, 1#, 10#, 0.9, 30#, 0.8)
+    Else
+        GetDefaultKdProfile = Array(0#, 1#, 10#, 1#, 60#, 1#)
+    End If
+End Function
+
+Private Function EvalKdMultiplier(ByVal tSec As Double, ByVal t0 As Double, ByVal k0 As Double, _
+                                  ByVal t1 As Double, ByVal k1 As Double, ByVal t2 As Double, ByVal k2 As Double) As Double
+    If tSec <= t1 Then
+        EvalKdMultiplier = k0 + (k1 - k0) * SafeDiv((tSec - t0), (t1 - t0), 0)
+    ElseIf tSec <= t2 Then
+        EvalKdMultiplier = k1 + (k2 - k1) * SafeDiv((tSec - t1), (t2 - t1), 0)
+    Else
+        EvalKdMultiplier = k2
+    End If
+End Function
+
+Private Function DynamicKdByTime(ByVal equipType As String, ByVal tSec As Double, ByVal kdBase As Double) As Double
+    Dim prof As Variant, key As String
+    Dim m As Double
+    key = UCase$(Trim$(equipType))
+    If Not m_KdProfiles Is Nothing Then
+        If m_KdProfiles.Exists(key) Then
+            prof = m_KdProfiles(key)
+        Else
+            prof = GetDefaultKdProfile(equipType)
+        End If
+    Else
+        prof = GetDefaultKdProfile(equipType)
+    End If
+    m = EvalKdMultiplier(tSec, prof(0), prof(1), prof(2), prof(3), prof(4), prof(5))
+    DynamicKdByTime = kdBase * m
+    If DynamicKdByTime < 0.1 Then DynamicKdByTime = 0.1
+    If DynamicKdByTime > 1# Then DynamicKdByTime = 1#
+End Function
+
+Private Function KdProfileText(ByVal equipType As String, ByVal kdBase As Double) As String
+    Dim prof As Variant, key As String, src As String
+    key = UCase$(Trim$(equipType))
+    src = "default"
+    If Not m_KdProfiles Is Nothing Then
+        If m_KdProfiles.Exists(key) Then
+            prof = m_KdProfiles(key)
+            src = "Config"
+        Else
+            prof = GetDefaultKdProfile(equipType)
+        End If
+    Else
+        prof = GetDefaultKdProfile(equipType)
+    End If
+    KdProfileText = src & ": " & Format(prof(0), "0") & "-" & Format(prof(2), "0") & "с " & _
+                    Format(prof(1), "0.00") & "->" & Format(prof(3), "0.00") & "; " & _
+                    Format(prof(2), "0") & "-" & Format(prof(4), "0") & "с " & _
+                    Format(prof(3), "0.00") & "->" & Format(prof(5), "0.00") & "; >" & _
+                    Format(prof(4), "0") & "с " & Format(prof(5), "0.00")
 End Function
 
 ' ==========================================================
