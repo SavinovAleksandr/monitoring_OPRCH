@@ -32,7 +32,7 @@ Private Const SH_LOG As String = "Log"
 Private Const CHART_SUFFIX As String = "_Ãðàô"
 
 Private m_LogRow As Long
-Private m_KdProfiles As Object   ' key=EQUIPTYPE, value=Array(t0,m0,t1,m1,t2,m2)
+Private m_KdProfiles As Object   ' key=EQUIPTYPE, value=Array(t0,kd0,t1,kd1,t2,kd2,t3,kd3)
 
 Private Type TSettings
     FNom As Double
@@ -155,16 +155,16 @@ Public Sub SetupOPRCHTemplate()
     wsCfg.Cells(9, 23).Resize(1, 2).Value = Array("Èíòåðâàë ãðàôèêà, ñ", 120)
     wsCfg.Cells(10, 23).Resize(1, 2).Value = Array("Îêíî óñòàíîâèâ., ñ", 30)
 
-    wsCfg.Range("AA1").Value = "Ïðîôèëè Kä(t)"
-    wsCfg.Range("AA2:AG2").Value = Array("Òèï_îáîðóäîâàíèÿ", "t0, ñ", "k0", "t1, ñ", "k1", "t2, ñ", "k2")
-    wsCfg.Cells(3, 27).Resize(1, 7).Value = Array("ÏÒÓ_áëîê", 0, 1, 4, 0.8, 30, 0.5)
-    wsCfg.Cells(4, 27).Resize(1, 7).Value = Array("ÏÒÓ_íåáëîê", 0, 1, 4, 0.8, 30, 0.5)
-    wsCfg.Cells(5, 27).Resize(1, 7).Value = Array("ÃÒÓ", 0, 1, 15, 0.9, 60, 0.7)
-    wsCfg.Cells(6, 27).Resize(1, 7).Value = Array("ÏÃÓ_óòèë", 0, 1, 30, 0.75, 120, 0.5)
-    wsCfg.Cells(7, 27).Resize(1, 7).Value = Array("ÏÃÓ_ñáðîñí", 0, 1, 30, 0.7, 180, 0.4)
-    wsCfg.Cells(8, 27).Resize(1, 7).Value = Array("ÃÏÀ", 0, 1, 10, 0.9, 30, 0.8)
+    wsCfg.Range("AA1").Value = "Ïðîôèëè Kä(t) (àáñîëþòíûå çíà÷åíèÿ Kä)"
+    wsCfg.Range("AA2:AI2").Value = Array("Òèï_îáîðóäîâàíèÿ", "t0, ñ", "Kä0", "t1, ñ", "Kä1", "t2, ñ", "Kä2", "t3, ñ", "Kä3")
+    wsCfg.Cells(3, 27).Resize(1, 9).Value = Array("ÏÒÓ_áëîê", 0, 1, 30, 0.5, 240, 0.8, 600, 1)
+    wsCfg.Cells(4, 27).Resize(1, 9).Value = Array("ÏÒÓ_íåáëîê", 0, 1, 30, 0.5, 240, 0.8, 600, 1)
+    wsCfg.Cells(5, 27).Resize(1, 9).Value = Array("ÃÒÓ", 0, 1, 30, 0.9, 240, 0.8, 600, 1)
+    wsCfg.Cells(6, 27).Resize(1, 9).Value = Array("ÏÃÓ_óòèë", 0, 1, 30, 0.75, 240, 0.7, 900, 1)
+    wsCfg.Cells(7, 27).Resize(1, 9).Value = Array("ÏÃÓ_ñáðîñí", 0, 1, 30, 0.7, 240, 0.65, 1200, 1)
+    wsCfg.Cells(8, 27).Resize(1, 9).Value = Array("ÃÏÀ", 0, 1, 30, 0.9, 240, 0.85, 600, 1)
 
-    wsCfg.Columns("A:AG").AutoFit
+    wsCfg.Columns("A:AI").AutoFit
     wsRaw.Columns("A:E").AutoFit
     EnsureControlButtons wsCfg
 
@@ -2106,72 +2106,93 @@ End Function
 Private Sub LoadKdProfiles(ByVal wsCfg As Worksheet)
     Dim r As Long, lastR As Long
     Dim et As String
-    Dim t0 As Double, t1 As Double, t2 As Double
-    Dim k0 As Double, k1 As Double, k2 As Double
+    Dim t0 As Double, t1 As Double, t2 As Double, t3 As Double
+    Dim kd0 As Double, kd1 As Double, kd2 As Double, kd3 As Double
     Set m_KdProfiles = CreateObject("Scripting.Dictionary")
     lastR = LastUsedRow(wsCfg)
     For r = 3 To lastR
         et = UCase$(Trim$(CStr(wsCfg.Cells(r, 27).Value)))
         If Len(et) = 0 Then GoTo NX
         t0 = NzD(wsCfg.Cells(r, 28).Value, 0)
-        k0 = NzD(wsCfg.Cells(r, 29).Value, 1)
+        kd0 = NzD(wsCfg.Cells(r, 29).Value, -1)
         t1 = NzD(wsCfg.Cells(r, 30).Value, 0)
-        k1 = NzD(wsCfg.Cells(r, 31).Value, 1)
+        kd1 = NzD(wsCfg.Cells(r, 31).Value, -1)
         t2 = NzD(wsCfg.Cells(r, 32).Value, 0)
-        k2 = NzD(wsCfg.Cells(r, 33).Value, 1)
-        m_KdProfiles(et) = Array(t0, k0, t1, k1, t2, k2)
+        kd2 = NzD(wsCfg.Cells(r, 33).Value, -1)
+        t3 = NzD(wsCfg.Cells(r, 34).Value, 0)
+        kd3 = NzD(wsCfg.Cells(r, 35).Value, -1)
+        m_KdProfiles(et) = Array(t0, kd0, t1, kd1, t2, kd2, t3, kd3)
 NX:
     Next r
 End Sub
 
-Private Function GetDefaultKdProfile(ByVal equipType As String) As Variant
+Private Function GetDefaultKdProfile(ByVal equipType As String, ByVal kdBase As Double) As Variant
     Dim et As String
     et = UCase$(Trim$(equipType))
     If InStr(et, "ÏÒÓ_ÁËÎÊ") > 0 Then
-        GetDefaultKdProfile = Array(0#, 1#, 4#, 0.8, 30#, 0.5)
+        GetDefaultKdProfile = Array(0#, kdBase, 30#, 0.5, 240#, 0.8, 600#, kdBase)
     ElseIf InStr(et, "ÏÒÓ_ÍÅÁËÎÊ") > 0 Or InStr(et, "ÏÒÓ") > 0 Then
-        GetDefaultKdProfile = Array(0#, 1#, 4#, 0.8, 30#, 0.5)
+        GetDefaultKdProfile = Array(0#, kdBase, 30#, 0.5, 240#, 0.8, 600#, kdBase)
     ElseIf InStr(et, "ÃÒÓ") > 0 Then
-        GetDefaultKdProfile = Array(0#, 1#, 15#, 0.9, 60#, 0.7)
+        GetDefaultKdProfile = Array(0#, kdBase, 30#, 0.9, 240#, 0.8, 600#, kdBase)
     ElseIf InStr(et, "ÏÃÓ_ÓÒÈË") > 0 Or InStr(et, "ÓÒÈË") > 0 Then
-        GetDefaultKdProfile = Array(0#, 1#, 30#, 0.75, 120#, 0.5)
+        GetDefaultKdProfile = Array(0#, kdBase, 30#, 0.75, 240#, 0.7, 900#, kdBase)
     ElseIf InStr(et, "ÏÃÓ_ÑÁÐÎÑÍ") > 0 Or InStr(et, "ÑÁÐÎÑÍ") > 0 Then
-        GetDefaultKdProfile = Array(0#, 1#, 30#, 0.7, 180#, 0.4)
+        GetDefaultKdProfile = Array(0#, kdBase, 30#, 0.7, 240#, 0.65, 1200#, kdBase)
     ElseIf InStr(et, "ÃÏÀ") > 0 Then
-        GetDefaultKdProfile = Array(0#, 1#, 10#, 0.9, 30#, 0.8)
+        GetDefaultKdProfile = Array(0#, kdBase, 30#, 0.9, 240#, 0.85, 600#, kdBase)
     Else
-        GetDefaultKdProfile = Array(0#, 1#, 10#, 1#, 60#, 1#)
+        GetDefaultKdProfile = Array(0#, kdBase, 30#, kdBase, 240#, kdBase, 600#, kdBase)
     End If
 End Function
 
-Private Function EvalKdMultiplier(ByVal tSec As Double, ByVal t0 As Double, ByVal k0 As Double, _
-                                  ByVal t1 As Double, ByVal k1 As Double, ByVal t2 As Double, ByVal k2 As Double) As Double
-    If tSec <= t1 Then
-        EvalKdMultiplier = k0 + (k1 - k0) * SafeDiv((tSec - t0), (t1 - t0), 0)
-    ElseIf tSec <= t2 Then
-        EvalKdMultiplier = k1 + (k2 - k1) * SafeDiv((tSec - t1), (t2 - t1), 0)
-    Else
-        EvalKdMultiplier = k2
+Private Function EvalKdAbs(ByVal tSec As Double, ByVal prof As Variant) As Double
+    Dim t(0 To 3) As Double, k(0 To 3) As Double
+    Dim i As Long, n As Long, j As Long
+    n = 0
+    For i = 0 To 3
+        If CDbl(prof(2 * i + 1)) >= 0 Then
+            t(n) = CDbl(prof(2 * i))
+            k(n) = CDbl(prof(2 * i + 1))
+            n = n + 1
+        End If
+    Next i
+    If n = 0 Then
+        EvalKdAbs = 0.5
+        Exit Function
     End If
+    If n = 1 Then
+        EvalKdAbs = k(0)
+        Exit Function
+    End If
+    For j = 1 To n - 1
+        If tSec <= t(j) Then
+            EvalKdAbs = k(j - 1) + (k(j) - k(j - 1)) * SafeDiv((tSec - t(j - 1)), (t(j) - t(j - 1)), 0)
+            Exit Function
+        End If
+    Next j
+    EvalKdAbs = k(n - 1)
+End Function
+
+Private Function ClampKd(ByVal kdVal As Double) As Double
+    ClampKd = kdVal
+    If ClampKd < 0.1 Then ClampKd = 0.1
+    If ClampKd > 1# Then ClampKd = 1#
 End Function
 
 Private Function DynamicKdByTime(ByVal equipType As String, ByVal tSec As Double, ByVal kdBase As Double) As Double
     Dim prof As Variant, key As String
-    Dim m As Double
     key = UCase$(Trim$(equipType))
     If Not m_KdProfiles Is Nothing Then
         If m_KdProfiles.Exists(key) Then
             prof = m_KdProfiles(key)
         Else
-            prof = GetDefaultKdProfile(equipType)
+            prof = GetDefaultKdProfile(equipType, kdBase)
         End If
     Else
-        prof = GetDefaultKdProfile(equipType)
+        prof = GetDefaultKdProfile(equipType, kdBase)
     End If
-    m = EvalKdMultiplier(tSec, prof(0), prof(1), prof(2), prof(3), prof(4), prof(5))
-    DynamicKdByTime = kdBase * m
-    If DynamicKdByTime < 0.1 Then DynamicKdByTime = 0.1
-    If DynamicKdByTime > 1# Then DynamicKdByTime = 1#
+    DynamicKdByTime = ClampKd(EvalKdAbs(tSec, prof))
 End Function
 
 Private Function KdProfileText(ByVal equipType As String, ByVal kdBase As Double) As String
@@ -2183,16 +2204,15 @@ Private Function KdProfileText(ByVal equipType As String, ByVal kdBase As Double
             prof = m_KdProfiles(key)
             src = "Config"
         Else
-            prof = GetDefaultKdProfile(equipType)
+            prof = GetDefaultKdProfile(equipType, kdBase)
         End If
     Else
-        prof = GetDefaultKdProfile(equipType)
+        prof = GetDefaultKdProfile(equipType, kdBase)
     End If
-    KdProfileText = src & ": " & Format(prof(0), "0") & "-" & Format(prof(2), "0") & "ñ " & _
-                    Format(prof(1), "0.00") & "->" & Format(prof(3), "0.00") & "; " & _
-                    Format(prof(2), "0") & "-" & Format(prof(4), "0") & "ñ " & _
-                    Format(prof(3), "0.00") & "->" & Format(prof(5), "0.00") & "; >" & _
-                    Format(prof(4), "0") & "ñ " & Format(prof(5), "0.00")
+    KdProfileText = src & ": t0=" & Format(prof(0), "0") & "ñ Kä0=" & Format(prof(1), "0.00") & _
+                    "; t1=" & Format(prof(2), "0") & "ñ Kä1=" & Format(prof(3), "0.00") & _
+                    "; t2=" & Format(prof(4), "0") & "ñ Kä2=" & Format(prof(5), "0.00") & _
+                    "; t3=" & Format(prof(6), "0") & "ñ Kä3=" & Format(prof(7), "0.00")
 End Function
 
 ' ==========================================================
