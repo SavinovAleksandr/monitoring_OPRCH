@@ -55,7 +55,6 @@ Private Type TGenCfg
     PNom As Double
     SPct As Double
     Fnch As Double
-    Kd As Double
     Enabled As Boolean
     QualEnabled As Boolean
     T5Sec As Double
@@ -131,18 +130,18 @@ Public Sub SetupOPRCHTemplate()
     wsRaw.Range("D1").Value = "ТГ-2"
     wsRaw.Range("E1").Value = "ТГ-3"
 
-    wsCfg.Range("A1:U1").Value = Array( _
+    wsCfg.Range("A1:T1").Value = Array( _
         "Станция", "Генератор", "Колонка_мощности", "Колонка_частоты", "Тип_оборудования", _
-        "Pном, МВт", "S, %", "fнч, Гц", "Kд", "Вкл (1/0)", "Кач_вкл (1/0)", _
+        "Pном, МВт", "S, %", "fнч, Гц", "Вкл (1/0)", "Кач_вкл (1/0)", _
         "t5, c", "dP5, %Pном", "t10, c", "dP10, %Pном", "Уст_допуск, %Pном", _
         "В сумму станции (1/0)", "Контр_уст (1/0)", "Паропровод", _
         "Pmax, МВт", "Pmin, МВт" _
     )
 
-    wsCfg.Cells(2, 1).Resize(1, 21).Value = Array("Сосногорская ТЭЦ", "ТГ-5", "ТГ-5", "Частота", "ПТУ_неблок", 55, 4.2, 0.105, 0.5, 1, 1, 15, 5, 420, 10, 1, 1, 1, "", 55, 15)
-    wsCfg.Cells(3, 1).Resize(1, 21).Value = Array("Сосногорская ТЭЦ", "ТГ-7", "ТГ-7", "Частота", "ПТУ_неблок", 60, 4.5, 0.11, 0.5, 1, 1, 15, 5, 420, 10, 1, 1, 1, "", 60, 20)
-    wsCfg.Cells(4, 1).Resize(1, 21).Value = Array("ТЭЦ СЛПК", "ТГ-2Э", "ТГ-2Э", "Частота", "ПТУ_неблок", 50, 4.5, 0.15, 0.5, 1, 1, 15, 5, 420, 10, 1, 1, 1, "Э", 50, 15)
-    wsCfg.Cells(5, 1).Resize(1, 21).Value = Array("ТЭЦ СЛПК", "ТГ-5У", "ТГ-5У", "Частота", "ПТУ_неблок", 87.7, 4.2, 0.15, 0.5, 1, 1, 15, 5, 420, 10, 1, 1, 1, "У", 87.7, 25)
+    wsCfg.Cells(2, 1).Resize(1, 20).Value = Array("Сосногорская ТЭЦ", "ТГ-5", "ТГ-5", "Частота", "ПТУ_неблок", 55, 4.2, 0.105, 1, 1, 15, 5, 420, 10, 1, 1, 1, "", 55, 15)
+    wsCfg.Cells(3, 1).Resize(1, 20).Value = Array("Сосногорская ТЭЦ", "ТГ-7", "ТГ-7", "Частота", "ПТУ_неблок", 60, 4.5, 0.11, 1, 1, 15, 5, 420, 10, 1, 1, 1, "", 60, 20)
+    wsCfg.Cells(4, 1).Resize(1, 20).Value = Array("ТЭЦ СЛПК", "ТГ-2Э", "ТГ-2Э", "Частота", "ПТУ_неблок", 50, 4.5, 0.15, 1, 1, 15, 5, 420, 10, 1, 1, 1, "Э", 50, 15)
+    wsCfg.Cells(5, 1).Resize(1, 20).Value = Array("ТЭЦ СЛПК", "ТГ-5У", "ТГ-5У", "Частота", "ПТУ_неблок", 87.7, 4.2, 0.15, 1, 1, 15, 5, 420, 10, 1, 1, 1, "У", 87.7, 25)
 
     wsCfg.Range("W1").Value = "Глобальные настройки"
     wsCfg.Cells(2, 23).Resize(1, 2).Value = Array("fном, Гц", 50)
@@ -305,11 +304,11 @@ Public Sub ApplyPresetsToConfig()
         et = Trim$(CStr(wsCfg.Cells(r, 5).Value))
         If Len(et) = 0 Then GoTo NX
         pr = GetPreset(et)
-        If NzD(wsCfg.Cells(r, 12).Value, 0) <= 0 Then wsCfg.Cells(r, 12).Value = pr.T5Sec: changed = changed + 1
-        If NzD(wsCfg.Cells(r, 13).Value, 0) <= 0 Then wsCfg.Cells(r, 13).Value = pr.Dp5Pct: changed = changed + 1
-        If NzD(wsCfg.Cells(r, 14).Value, 0) <= 0 Then wsCfg.Cells(r, 14).Value = pr.T10Sec: changed = changed + 1
-        If NzD(wsCfg.Cells(r, 15).Value, 0) <= 0 Then wsCfg.Cells(r, 15).Value = pr.Dp10Pct: changed = changed + 1
-        If NzD(wsCfg.Cells(r, 16).Value, 0) <= 0 Then wsCfg.Cells(r, 16).Value = pr.SteadyTolPct: changed = changed + 1
+        If NzD(wsCfg.Cells(r, 11).Value, 0) <= 0 Then wsCfg.Cells(r, 11).Value = pr.T5Sec: changed = changed + 1
+        If NzD(wsCfg.Cells(r, 12).Value, 0) <= 0 Then wsCfg.Cells(r, 12).Value = pr.Dp5Pct: changed = changed + 1
+        If NzD(wsCfg.Cells(r, 13).Value, 0) <= 0 Then wsCfg.Cells(r, 13).Value = pr.T10Sec: changed = changed + 1
+        If NzD(wsCfg.Cells(r, 14).Value, 0) <= 0 Then wsCfg.Cells(r, 14).Value = pr.Dp10Pct: changed = changed + 1
+        If NzD(wsCfg.Cells(r, 15).Value, 0) <= 0 Then wsCfg.Cells(r, 15).Value = pr.SteadyTolPct: changed = changed + 1
         If NzD(wsCfg.Cells(r, 8).Value, -1) < 0 Then wsCfg.Cells(r, 8).Value = pr.Fnch: changed = changed + 1
 NX:
     Next r
@@ -355,7 +354,7 @@ Private Function AnalyzeOneGenerator(ByVal wsRaw As Worksheet, ByRef st As TSett
     calcStep = "Расчет требуемой мощности"
     Dim preqOrig As Double
     tQuantSec = SecBetween(wsRaw.Cells(startRow, timeCol).Value, wsRaw.Cells(endQ, timeCol).Value)
-    kdQuant = DynamicKdByTime(g.EquipType, tQuantSec, g.Kd)
+    kdQuant = DynamicKdByTime(g.EquipType, tQuantSec)
     If dfr <> 0 Then
         preqOrig = -100# / g.SPct * g.PNom / st.FNom * kdQuant * dfr
     Else
@@ -426,7 +425,7 @@ Private Function AnalyzeOneGenerator(ByVal wsRaw As Worksheet, ByRef st As TSett
     res.PReqOrig = preqOrig
     res.PFact = pfact
     res.KdUsedQuant = kdQuant
-    res.KdProfile = KdProfileText(g.EquipType, g.Kd)
+    res.KdProfile = KdProfileText(g.EquipType)
     res.PMaxEff = pMaxEff
     res.PMinEff = pMinEff
     res.ReservePlus = reservePlus
@@ -583,7 +582,7 @@ Private Sub EvaluateQualitative(ByVal wsRaw As Worksheet, ByRef st As TSettings,
     ' Поэтому цель установившегося = среднее Pтреб(t) в том же хвостовом окне.
     ' Если частота вернулась, Pтреб_ср близок к нулю и генератор тоже должен вернуться к P0.
     res.PReqSteady = ComputeSteadyPReqMean(wsRaw, fCol, timeCol, res.EndQualRow, _
-                                           st.SteadyWindowSec, st.FNom, g.SPct, g.PNom, g.Kd, g.Fnch, _
+                                           st.SteadyWindowSec, st.FNom, g.SPct, g.PNom, g.Fnch, _
                                            g.EquipType, wsRaw.Cells(res.StartRow, timeCol).Value)
 
     res.QualT5Pass = (hit5 And t5 <= g.T5Sec)
@@ -650,7 +649,7 @@ End Function
 Private Function ComputeSteadyPReqMean(ByVal wsRaw As Worksheet, ByVal freqCol As Long, ByVal timeCol As Long, _
                                         ByVal endRow As Long, ByVal windowSec As Double, _
                                         ByVal fNom As Double, ByVal sPct As Double, ByVal pNom As Double, _
-                                        ByVal kd As Double, ByVal fnch As Double, _
+                                        ByVal fnch As Double, _
                                         ByVal equipType As String, ByVal tStart As Variant) As Double
     ' Усреднённый Pтреб(t) за окно [endRow-windowSec ; endRow].
     ' Pтреб(t) = -100/S * Pном/fном * Kd * dFr(t), где dFr - отклонение за fнч.
@@ -667,7 +666,7 @@ Private Function ComputeSteadyPReqMean(ByVal wsRaw As Worksheet, ByVal freqCol A
             fv = CDbl(wsRaw.Cells(r, freqCol).Value) - fNom
             dFr = DeadbandDeviation(fv, fnch)
             tSec = SecBetween(tStart, wsRaw.Cells(r, timeCol).Value)
-            kdEff = DynamicKdByTime(equipType, tSec, kd)
+            kdEff = DynamicKdByTime(equipType, tSec)
             sumP = sumP + (-100# / sPct * pNom / fNom * kdEff * dFr)
             cnt = cnt + 1
         End If
@@ -884,7 +883,8 @@ Private Sub WriteGeneratorSheet(ByVal wsRaw As Worksheet, ByRef st As TSettings,
         ws.Cells(outR, 2).Value = wsRaw.Cells(r, fCol).Value
         ws.Cells(outR, 3).Value = wsRaw.Cells(r, pCol).Value
         ws.Cells(outR, 4).Value = dP
-        ws.Cells(outR, 5).Value = -100# / g.SPct * g.PNom / st.FNom * g.Kd * dFr
+        ws.Cells(outR, 5).Value = -100# / g.SPct * g.PNom / st.FNom * DynamicKdByTime(g.EquipType, _
+                              SecBetween(wsRaw.Cells(res.StartRow, timeCol).Value, wsRaw.Cells(r, timeCol).Value)) * dFr
         ws.Cells(outR, 6).Value = dFr
         ws.Cells(outR, 8).Value = targetPreq + tolPreq
         ws.Cells(outR, 9).Value = targetPreq - tolPreq
@@ -1307,7 +1307,7 @@ Private Sub BuildOneStationAggregate(ByVal wsRaw As Worksheet, ByVal wsCfg As Wo
                                       ByRef st As TSettings)
     Dim cfgLast As Long, r As Long, cnt As Long
     Dim g As TGenCfg
-    Dim pCols() As Long, fnchArr() As Double, sArr() As Double, kdArr() As Double, pnomArr() As Double
+    Dim pCols() As Long, fnchArr() As Double, sArr() As Double, pnomArr() As Double, etArr() As String
     Dim pmaxArr() As Double, pminArr() As Double
     Dim freqCol As Long, timeCol As Long
     Dim shName As String, ws As Worksheet
@@ -1335,16 +1335,16 @@ Private Sub BuildOneStationAggregate(ByVal wsRaw As Worksheet, ByVal wsCfg As Wo
                     ReDim Preserve pCols(1 To cnt)
                     ReDim Preserve fnchArr(1 To cnt)
                     ReDim Preserve sArr(1 To cnt)
-                    ReDim Preserve kdArr(1 To cnt)
                     ReDim Preserve pnomArr(1 To cnt)
+                    ReDim Preserve etArr(1 To cnt)
                     ReDim Preserve pmaxArr(1 To cnt)
                     ReDim Preserve pminArr(1 To cnt)
                     pCols(cnt) = FindHeaderCol(wsRaw, g.PowerHeader)
                     If pCols(cnt) = 0 Then cnt = cnt - 1: GoTo NextCfg
                     fnchArr(cnt) = g.Fnch
                     sArr(cnt) = g.SPct
-                    kdArr(cnt) = g.Kd
                     pnomArr(cnt) = g.PNom
+                    etArr(cnt) = g.EquipType
                     pmaxArr(cnt) = g.PMax
                     pminArr(cnt) = g.PMin
                     If freqCol = 0 Then freqCol = FindHeaderCol(wsRaw, g.FreqHeader)
@@ -1379,9 +1379,11 @@ NextCfg:
 
     dF = MaxAbsDeviationInWindow(wsRaw, freqCol, startRow, endRow, st.FNom)
     preqOrig = 0
+    Dim tSecAgg As Double
     For i = 1 To cnt
         dfr = DeadbandDeviation(dF, fnchArr(i))
-        preqOrig = preqOrig + (-100# / sArr(i) * pnomArr(i) / st.FNom * kdArr(i) * dfr)
+        tSecAgg = SecBetween(wsRaw.Cells(startRow, timeCol).Value, wsRaw.Cells(endRow, timeCol).Value)
+        preqOrig = preqOrig + (-100# / sArr(i) * pnomArr(i) / st.FNom * DynamicKdByTime(etArr(i), tSecAgg) * dfr)
     Next i
 
     reservePlus = pMaxSum - p0
@@ -1462,7 +1464,8 @@ NextCfg:
         preqStep = 0
         For i = 1 To cnt
             dfr = DeadbandDeviation(NzD(wsRaw.Cells(r, freqCol).Value, st.FNom) - st.FNom, fnchArr(i))
-            preqStep = preqStep + (-100# / sArr(i) * pnomArr(i) / st.FNom * kdArr(i) * dfr)
+            tSecAgg = SecBetween(wsRaw.Cells(startRow, timeCol).Value, wsRaw.Cells(r, timeCol).Value)
+            preqStep = preqStep + (-100# / sArr(i) * pnomArr(i) / st.FNom * DynamicKdByTime(etArr(i), tSecAgg) * dfr)
         Next i
         ws.Cells(rowQ, 5).Value = preqStep
         ws.Cells(rowQ, 6).Value = dPmaxRel
@@ -1817,7 +1820,6 @@ Private Sub ValidateInputs(ByVal wsRaw As Worksheet, ByVal wsCfg As Worksheet, B
         If g.PNom <= 0 Then AppendLog "WARN", g.Station & "/" & g.Generator, "Pном <= 0"
         If g.SPct <= 1 Or g.SPct > 15 Then AppendLog "WARN", g.Station & "/" & g.Generator, "S вне [1..15] %: " & g.SPct
         If g.Fnch < 0 Or g.Fnch > 0.5 Then AppendLog "WARN", g.Station & "/" & g.Generator, "fнч вне [0..0.5] Гц: " & g.Fnch
-        If g.Kd < 0.1 Or g.Kd > 1 Then AppendLog "WARN", g.Station & "/" & g.Generator, "Kд вне [0.1..1]: " & g.Kd
         If g.T10Sec < g.T5Sec Then AppendLog "WARN", g.Station & "/" & g.Generator, "t10 < t5 (" & g.T10Sec & " < " & g.T5Sec & ")"
         ' Pmax/Pmin
         If g.PMax > 0 And g.PMax < g.PMin Then _
@@ -1883,27 +1885,26 @@ Private Function ReadGenCfg(ByVal ws As Worksheet, ByVal r As Long) As TGenCfg
     g.PNom = NzD(ws.Cells(r, 6).Value, 0)
     g.SPct = NzD(ws.Cells(r, 7).Value, 0)
     g.Fnch = NzD(ws.Cells(r, 8).Value, -1)
-    g.Kd = NzD(ws.Cells(r, 9).Value, 0.5)
-    g.Enabled = (NzD(ws.Cells(r, 10).Value, 1) <> 0)
-    g.QualEnabled = (NzD(ws.Cells(r, 11).Value, 1) <> 0)
-    g.T5Sec = NzD(ws.Cells(r, 12).Value, 0)
-    g.Dp5Pct = NzD(ws.Cells(r, 13).Value, 0)
-    g.T10Sec = NzD(ws.Cells(r, 14).Value, 0)
-    g.Dp10Pct = NzD(ws.Cells(r, 15).Value, 0)
-    g.SteadyTolPct = NzD(ws.Cells(r, 16).Value, 0)
-    g.InStationSum = (NzD(ws.Cells(r, 17).Value, 0) <> 0)
-    g.CheckSteady = (NzD(ws.Cells(r, 18).Value, 1) <> 0)
-    g.Paroprovod = Trim$(CStr(ws.Cells(r, 19).Value))
+    g.Enabled = (NzD(ws.Cells(r, 9).Value, 1) <> 0)
+    g.QualEnabled = (NzD(ws.Cells(r, 10).Value, 1) <> 0)
+    g.T5Sec = NzD(ws.Cells(r, 11).Value, 0)
+    g.Dp5Pct = NzD(ws.Cells(r, 12).Value, 0)
+    g.T10Sec = NzD(ws.Cells(r, 13).Value, 0)
+    g.Dp10Pct = NzD(ws.Cells(r, 14).Value, 0)
+    g.SteadyTolPct = NzD(ws.Cells(r, 15).Value, 0)
+    g.InStationSum = (NzD(ws.Cells(r, 16).Value, 0) <> 0)
+    g.CheckSteady = (NzD(ws.Cells(r, 17).Value, 1) <> 0)
+    g.Paroprovod = Trim$(CStr(ws.Cells(r, 18).Value))
     ' Pmax/Pmin: пусто = значения по умолчанию (Pmax=Pном, Pmin=0)
-    If Trim$(CStr(ws.Cells(r, 20).Value)) = "" Then
+    If Trim$(CStr(ws.Cells(r, 19).Value)) = "" Then
         g.PMax = g.PNom
     Else
-        g.PMax = NzD(ws.Cells(r, 20).Value, g.PNom)
+        g.PMax = NzD(ws.Cells(r, 19).Value, g.PNom)
     End If
-    If Trim$(CStr(ws.Cells(r, 21).Value)) = "" Then
+    If Trim$(CStr(ws.Cells(r, 20).Value)) = "" Then
         g.PMin = 0
     Else
-        g.PMin = NzD(ws.Cells(r, 21).Value, 0)
+        g.PMin = NzD(ws.Cells(r, 20).Value, 0)
     End If
     If g.PMax <= 0 Then g.PMax = g.PNom
     If g.PMin < 0 Then g.PMin = 0
@@ -1952,7 +1953,7 @@ End Function
 
 Private Function ValidateGenCfg(ByRef g As TGenCfg) As Boolean
     ValidateGenCfg = (Len(g.Station) > 0 And Len(g.Generator) > 0 And Len(g.PowerHeader) > 0 And Len(g.FreqHeader) > 0 _
-                      And g.PNom > 0 And g.SPct > 0 And g.Fnch >= 0 And g.Kd > 0)
+                      And g.PNom > 0 And g.SPct > 0 And g.Fnch >= 0)
 End Function
 
 ' ==========================================================
@@ -2126,26 +2127,6 @@ NX:
     Next r
 End Sub
 
-Private Function GetDefaultKdProfile(ByVal equipType As String, ByVal kdBase As Double) As Variant
-    Dim et As String
-    et = UCase$(Trim$(equipType))
-    If InStr(et, "ПТУ_БЛОК") > 0 Then
-        GetDefaultKdProfile = Array(0#, kdBase, 30#, 0.5, 240#, 0.8, 600#, kdBase)
-    ElseIf InStr(et, "ПТУ_НЕБЛОК") > 0 Or InStr(et, "ПТУ") > 0 Then
-        GetDefaultKdProfile = Array(0#, kdBase, 30#, 0.5, 240#, 0.8, 600#, kdBase)
-    ElseIf InStr(et, "ГТУ") > 0 Then
-        GetDefaultKdProfile = Array(0#, kdBase, 30#, 0.9, 240#, 0.8, 600#, kdBase)
-    ElseIf InStr(et, "ПГУ_УТИЛ") > 0 Or InStr(et, "УТИЛ") > 0 Then
-        GetDefaultKdProfile = Array(0#, kdBase, 30#, 0.75, 240#, 0.7, 900#, kdBase)
-    ElseIf InStr(et, "ПГУ_СБРОСН") > 0 Or InStr(et, "СБРОСН") > 0 Then
-        GetDefaultKdProfile = Array(0#, kdBase, 30#, 0.7, 240#, 0.65, 1200#, kdBase)
-    ElseIf InStr(et, "ГПА") > 0 Then
-        GetDefaultKdProfile = Array(0#, kdBase, 30#, 0.9, 240#, 0.85, 600#, kdBase)
-    Else
-        GetDefaultKdProfile = Array(0#, kdBase, 30#, kdBase, 240#, kdBase, 600#, kdBase)
-    End If
-End Function
-
 Private Function EvalKdAbs(ByVal tSec As Double, ByVal prof As Variant) As Double
     Dim t(0 To 3) As Double, k(0 To 3) As Double
     Dim i As Long, n As Long, j As Long
@@ -2157,13 +2138,8 @@ Private Function EvalKdAbs(ByVal tSec As Double, ByVal prof As Variant) As Doubl
             n = n + 1
         End If
     Next i
-    If n = 0 Then
-        EvalKdAbs = 0.5
-        Exit Function
-    End If
-    If n = 1 Then
-        EvalKdAbs = k(0)
-        Exit Function
+    If n < 2 Then
+        Err.Raise vbObjectError + 2403, , "Профиль Kд(t) должен содержать минимум 2 точки (AA:AI)."
     End If
     For j = 1 To n - 1
         If tSec <= t(j) Then
@@ -2180,35 +2156,30 @@ Private Function ClampKd(ByVal kdVal As Double) As Double
     If ClampKd > 1# Then ClampKd = 1#
 End Function
 
-Private Function DynamicKdByTime(ByVal equipType As String, ByVal tSec As Double, ByVal kdBase As Double) As Double
+Private Function DynamicKdByTime(ByVal equipType As String, ByVal tSec As Double) As Double
     Dim prof As Variant, key As String
     key = UCase$(Trim$(equipType))
-    If Not m_KdProfiles Is Nothing Then
-        If m_KdProfiles.Exists(key) Then
-            prof = m_KdProfiles(key)
-        Else
-            prof = GetDefaultKdProfile(equipType, kdBase)
-        End If
-    Else
-        prof = GetDefaultKdProfile(equipType, kdBase)
+    If m_KdProfiles Is Nothing Then Err.Raise vbObjectError + 2401, , "Профили Kд(t) не загружены."
+    If Not m_KdProfiles.Exists(key) Then
+        Err.Raise vbObjectError + 2402, , "Для типа '" & equipType & "' не задан профиль Kд(t) в Config (AA:AI)."
     End If
+    prof = m_KdProfiles(key)
     DynamicKdByTime = ClampKd(EvalKdAbs(tSec, prof))
 End Function
 
-Private Function KdProfileText(ByVal equipType As String, ByVal kdBase As Double) As String
+Private Function KdProfileText(ByVal equipType As String) As String
     Dim prof As Variant, key As String, src As String
     key = UCase$(Trim$(equipType))
-    src = "default"
-    If Not m_KdProfiles Is Nothing Then
-        If m_KdProfiles.Exists(key) Then
-            prof = m_KdProfiles(key)
-            src = "Config"
-        Else
-            prof = GetDefaultKdProfile(equipType, kdBase)
-        End If
-    Else
-        prof = GetDefaultKdProfile(equipType, kdBase)
+    src = "Config"
+    If m_KdProfiles Is Nothing Then
+        KdProfileText = "Config: профили Kд(t) не загружены"
+        Exit Function
     End If
+    If Not m_KdProfiles.Exists(key) Then
+        KdProfileText = "Config: профиль для типа '" & equipType & "' не задан"
+        Exit Function
+    End If
+    prof = m_KdProfiles(key)
     KdProfileText = src & ": t0=" & Format(prof(0), "0") & "с Kд0=" & Format(prof(1), "0.00") & _
                     "; t1=" & Format(prof(2), "0") & "с Kд1=" & Format(prof(3), "0.00") & _
                     "; t2=" & Format(prof(4), "0") & "с Kд2=" & Format(prof(5), "0.00") & _
