@@ -33,6 +33,7 @@ Private Const CHART_SUFFIX As String = "_Граф"
 
 Private m_LogRow As Long
 Private m_KdProfiles As Object   ' key=EQUIPTYPE, value=Array(t0,kd0,t1,kd1,t2,kd2,t3,kd3)
+Private m_ChartOpts As Object    ' key=REL_*/ABS_*, value=Boolean
 
 Private Type TSettings
     FNom As Double
@@ -163,9 +164,18 @@ Public Sub SetupOPRCHTemplate()
     wsCfg.Cells(7, 27).Resize(1, 9).Value = Array("ПГУ_сбросн", 0, 1, 30, 0.7, 240, 0.65, 1200, 1)
     wsCfg.Cells(8, 27).Resize(1, 9).Value = Array("ГПА", 0, 1, 30, 0.9, 240, 0.85, 600, 1)
 
-    wsCfg.Columns("A:AI").AutoFit
+    wsCfg.Range("AJ1").Value = "Отображение рядов графиков (1/0)"
+    wsCfg.Range("AJ2:AL2").Value = Array("Ряд", "Относит.", "Абсолют.")
+    wsCfg.Range("AJ3:AJ10").Value = WorksheetFunction.Transpose(Array( _
+        "Pфакт", "Pтреб", "+Допуск", "-Допуск", "Pmax/Pmin", "Частота", "Маркеры t5/t10/fнч", "Резерв" _
+    ))
+    wsCfg.Range("AK3:AL10").Value = 1
+    wsCfg.Range("AK10:AL10").Value = 0
+
+    wsCfg.Columns("A:AL").AutoFit
     wsRaw.Columns("A:E").AutoFit
     EnsureControlButtons wsCfg
+    EnsureChartOptionCheckboxes wsCfg
 
     MsgBox "Шаблон создан. Заполните RawData/Config и нажмите кнопку 'Запустить мониторинг ОПРЧ'.", vbInformation
 End Sub
@@ -190,6 +200,8 @@ Public Sub AnalyzeOPRCH()
     stepName = "Чтение настроек"
     st = ReadSettings(wsCfg)
     LoadKdProfiles wsCfg
+    LoadChartDisplayOptions wsCfg
+    EnsureChartOptionCheckboxes wsCfg
     timeCol = FindHeaderCol(wsRaw, "Время")
     If timeCol = 0 Then Err.Raise vbObjectError + 2001, , "В RawData не найдена колонка 'Время'."
 
@@ -1012,23 +1024,27 @@ Private Sub WriteGeneratorChartSheet(ByRef st As TSettings, ByRef g As TGenCfg, 
         .HasTitle = True
         .ChartTitle.Text = "Мониторинг ОПРЧ: " & g.Station & " / " & g.Generator
         On Error Resume Next
-        .Axes(xlCategory).CategoryType = xlTimeScale
+        .Axes(xlCategory).CategoryType = xlCategoryScale
         On Error GoTo 0
     End With
 
     ' Основные ряды
-    AddSeries chartObj.Chart, wsData, startDataRow, endChartDataRow, 1, 4, "Pфакт, МВт", False
-    AddSeries chartObj.Chart, wsData, startDataRow, endChartDataRow, 1, 5, "Pтреб, МВт", False
-    AddSeries chartObj.Chart, wsData, startDataRow, endChartDataRow, 1, 8, "+Допуск уст.", False
-    AddSeries chartObj.Chart, wsData, startDataRow, endChartDataRow, 1, 9, "-Допуск уст.", False
-    AddLimitLineSeries chartObj.Chart, wsData, startDataRow, endChartDataRow, 1, 13, "Pmax (dPmax)"
-    AddLimitLineSeries chartObj.Chart, wsData, startDataRow, endChartDataRow, 1, 14, "Pmin (dPmin)"
-    AddSeries chartObj.Chart, wsData, startDataRow, endChartDataRow, 1, 2, "Частота, Гц", True
+    If ChartOpt("REL_PFACT", True) Then AddSeries chartObj.Chart, wsData, startDataRow, endChartDataRow, 1, 4, "Pфакт, МВт", False
+    If ChartOpt("REL_PREQ", True) Then AddSeries chartObj.Chart, wsData, startDataRow, endChartDataRow, 1, 5, "Pтреб, МВт", False
+    If ChartOpt("REL_TOL_P", True) Then AddSeries chartObj.Chart, wsData, startDataRow, endChartDataRow, 1, 8, "+Допуск уст.", False
+    If ChartOpt("REL_TOL_M", True) Then AddSeries chartObj.Chart, wsData, startDataRow, endChartDataRow, 1, 9, "-Допуск уст.", False
+    If ChartOpt("REL_LIMITS", True) Then
+        AddLimitLineSeries chartObj.Chart, wsData, startDataRow, endChartDataRow, 1, 13, "Pmax (dPmax)"
+        AddLimitLineSeries chartObj.Chart, wsData, startDataRow, endChartDataRow, 1, 14, "Pmin (dPmin)"
+    End If
+    If ChartOpt("REL_FREQ", True) Then AddSeries chartObj.Chart, wsData, startDataRow, endChartDataRow, 1, 2, "Частота, Гц", True
 
     ' Вертикальные маркеры t5 / t10 / выхода за fнч - через отдельные "точечные" ряды
-    AddMarkerSeries chartObj.Chart, wsData, startDataRow, endChartDataRow, 1, 10, "t5"
-    AddMarkerSeries chartObj.Chart, wsData, startDataRow, endChartDataRow, 1, 11, "t10"
-    AddMarkerSeries chartObj.Chart, wsData, startDataRow, endChartDataRow, 1, 12, "Выход за fнч"
+    If ChartOpt("REL_MARKERS", True) Then
+        AddMarkerSeries chartObj.Chart, wsData, startDataRow, endChartDataRow, 1, 10, "t5"
+        AddMarkerSeries chartObj.Chart, wsData, startDataRow, endChartDataRow, 1, 11, "t10"
+        AddMarkerSeries chartObj.Chart, wsData, startDataRow, endChartDataRow, 1, 12, "Выход за fнч"
+    End If
 
     On Error Resume Next
     GetRangeMinMaxByCols wsData, startDataRow, endChartDataRow, Array(4, 5, 8, 9, 13, 14), yMin, yMax
@@ -1062,18 +1078,24 @@ Private Sub WriteGeneratorChartSheet(ByRef st As TSettings, ByRef g As TGenCfg, 
         .HasTitle = True
         .ChartTitle.Text = "Мониторинг ОПРЧ (абсолютные): " & g.Station & " / " & g.Generator
         On Error Resume Next
-        .Axes(xlCategory).CategoryType = xlTimeScale
+        .Axes(xlCategory).CategoryType = xlCategoryScale
         On Error GoTo 0
     End With
 
-    AddSeries chartObj.Chart, wsData, startDataRow, endChartDataRow, 1, 3, "Pфакт, МВт", False
-    AddSeries chartObj.Chart, wsData, startDataRow, endChartDataRow, 1, 15, "Pтреб, МВт (абс)", False
-    AddSeries chartObj.Chart, wsData, startDataRow, endChartDataRow, 1, 16, "+Допуск уст., МВт (абс)", False
-    AddSeries chartObj.Chart, wsData, startDataRow, endChartDataRow, 1, 17, "-Допуск уст., МВт (абс)", False
-    AddLimitLineSeries chartObj.Chart, wsData, startDataRow, endChartDataRow, 1, 18, "Pmax, МВт"
-    AddLimitLineSeries chartObj.Chart, wsData, startDataRow, endChartDataRow, 1, 19, "Pmin, МВт"
-    AddSeries chartObj.Chart, wsData, startDataRow, endChartDataRow, 1, 2, "Частота, Гц", True
-    ' Маркеры для абсолютного графика отключены, чтобы избежать проблем компиляции в части локалей VBA.
+    If ChartOpt("ABS_PFACT", True) Then AddSeries chartObj.Chart, wsData, startDataRow, endChartDataRow, 1, 3, "Pфакт, МВт", False
+    If ChartOpt("ABS_PREQ", True) Then AddSeries chartObj.Chart, wsData, startDataRow, endChartDataRow, 1, 15, "Pтреб, МВт (абс)", False
+    If ChartOpt("ABS_TOL_P", True) Then AddSeries chartObj.Chart, wsData, startDataRow, endChartDataRow, 1, 16, "+Допуск уст., МВт (абс)", False
+    If ChartOpt("ABS_TOL_M", True) Then AddSeries chartObj.Chart, wsData, startDataRow, endChartDataRow, 1, 17, "-Допуск уст., МВт (абс)", False
+    If ChartOpt("ABS_LIMITS", True) Then
+        AddLimitLineSeries chartObj.Chart, wsData, startDataRow, endChartDataRow, 1, 18, "Pmax, МВт"
+        AddLimitLineSeries chartObj.Chart, wsData, startDataRow, endChartDataRow, 1, 19, "Pmin, МВт"
+    End If
+    If ChartOpt("ABS_FREQ", True) Then AddSeries chartObj.Chart, wsData, startDataRow, endChartDataRow, 1, 2, "Частота, Гц", True
+    If ChartOpt("ABS_MARKERS", False) Then
+        AddMarkerSeries chartObj.Chart, wsData, startDataRow, endChartDataRow, 1, 20, "t5 abs"
+        AddMarkerSeries chartObj.Chart, wsData, startDataRow, endChartDataRow, 1, 21, "t10 abs"
+        AddMarkerSeries chartObj.Chart, wsData, startDataRow, endChartDataRow, 1, 22, "fнч abs"
+    End If
 
     On Error Resume Next
     GetRangeMinMaxByCols wsData, startDataRow, endChartDataRow, Array(3, 15, 16, 17, 18, 19), yMin, yMax
@@ -1529,7 +1551,7 @@ Private Sub WriteStationChartSheet(ByVal stationName As String, ByVal paropipeFi
         .HasTitle = True
         .ChartTitle.Text = "Суммарный мониторинг ОПРЧ: " & stationName & IIf(Len(paropipeFilter) > 0, " / " & paropipeFilter, "")
         On Error Resume Next
-        .Axes(xlCategory).CategoryType = xlTimeScale
+        .Axes(xlCategory).CategoryType = xlCategoryScale
         On Error GoTo 0
     End With
 
@@ -2183,6 +2205,63 @@ Private Function KdProfileText(ByVal equipType As String) As String
                     "; t2=" & Format(prof(4), "0") & "с Kд2=" & Format(prof(5), "0.00") & _
                     "; t3=" & Format(prof(6), "0") & "с Kд3=" & Format(prof(7), "0.00")
 End Function
+
+Private Sub LoadChartDisplayOptions(ByVal wsCfg As Worksheet)
+    Dim r As Long
+    Set m_ChartOpts = CreateObject("Scripting.Dictionary")
+    For r = 3 To 10
+        m_ChartOpts("REL_" & CStr(r)) = (NzD(wsCfg.Cells(r, 37).Value, 1) <> 0) ' AK
+        m_ChartOpts("ABS_" & CStr(r)) = (NzD(wsCfg.Cells(r, 38).Value, 1) <> 0) ' AL
+    Next r
+    ' Row mapping: 3 Pfact, 4 Preq, 5 Tol+, 6 Tol-, 7 Limits, 8 Freq, 9 Markers
+    m_ChartOpts("REL_PFACT") = m_ChartOpts("REL_3")
+    m_ChartOpts("REL_PREQ") = m_ChartOpts("REL_4")
+    m_ChartOpts("REL_TOL_P") = m_ChartOpts("REL_5")
+    m_ChartOpts("REL_TOL_M") = m_ChartOpts("REL_6")
+    m_ChartOpts("REL_LIMITS") = m_ChartOpts("REL_7")
+    m_ChartOpts("REL_FREQ") = m_ChartOpts("REL_8")
+    m_ChartOpts("REL_MARKERS") = m_ChartOpts("REL_9")
+    m_ChartOpts("ABS_PFACT") = m_ChartOpts("ABS_3")
+    m_ChartOpts("ABS_PREQ") = m_ChartOpts("ABS_4")
+    m_ChartOpts("ABS_TOL_P") = m_ChartOpts("ABS_5")
+    m_ChartOpts("ABS_TOL_M") = m_ChartOpts("ABS_6")
+    m_ChartOpts("ABS_LIMITS") = m_ChartOpts("ABS_7")
+    m_ChartOpts("ABS_FREQ") = m_ChartOpts("ABS_8")
+    m_ChartOpts("ABS_MARKERS") = m_ChartOpts("ABS_9")
+End Sub
+
+Private Function ChartOpt(ByVal key As String, ByVal fallback As Boolean) As Boolean
+    If m_ChartOpts Is Nothing Then
+        ChartOpt = fallback
+    ElseIf m_ChartOpts.Exists(key) Then
+        ChartOpt = CBool(m_ChartOpts(key))
+    Else
+        ChartOpt = fallback
+    End If
+End Function
+
+Private Sub EnsureChartOptionCheckboxes(ByVal ws As Worksheet)
+    Dim r As Long
+    Dim cb As CheckBox
+    Dim nm As String, c As Long
+    On Error Resume Next
+    For Each cb In ws.CheckBoxes
+        If Left$(cb.Name, 7) = "chkOpt_" Then cb.Delete
+    Next cb
+    On Error GoTo 0
+
+    For r = 3 To 9
+        For c = 37 To 38 ' AK, AL
+            nm = "chkOpt_" & r & "_" & c
+            Set cb = ws.CheckBoxes.Add(ws.Cells(r, c).Left + 2, ws.Cells(r, c).Top + 2, ws.Cells(r, c).Width - 4, ws.Cells(r, c).Height - 4)
+            cb.Name = nm
+            cb.Caption = ""
+            cb.LinkedCell = ws.Cells(r, c).Address(True, True, xlA1, True)
+            cb.Value = IIf(NzD(ws.Cells(r, c).Value, 1) <> 0, xlOn, xlOff)
+            cb.Placement = xlMoveAndSize
+        Next c
+    Next r
+End Sub
 
 ' ==========================================================
 ' Служебные
