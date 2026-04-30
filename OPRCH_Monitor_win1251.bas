@@ -887,22 +887,24 @@ Private Sub WriteGeneratorSheet(ByVal wsRaw As Worksheet, ByRef st As TSettings,
     markerLoAbs = res.P0 - markerSpanAbs
     target10Val = targetPreq
 
+    Dim preqStep As Double
     For r = displayStartRow To endRow
         dP = NzD(wsRaw.Cells(r, pCol).Value, 0) - res.P0
         dFr = DeadbandDeviation(NzD(wsRaw.Cells(r, fCol).Value, st.FNom) - st.FNom, g.Fnch)
+        preqStep = -100# / g.SPct * g.PNom / st.FNom * DynamicKdByTime(g.EquipType, _
+                   SecBetween(wsRaw.Cells(res.StartRow, timeCol).Value, wsRaw.Cells(r, timeCol).Value)) * dFr
 
         ws.Cells(outR, 1).Value = wsRaw.Cells(r, timeCol).Value
         ws.Cells(outR, 2).Value = wsRaw.Cells(r, fCol).Value
         ws.Cells(outR, 3).Value = wsRaw.Cells(r, pCol).Value
         ws.Cells(outR, 4).Value = dP
-        ws.Cells(outR, 5).Value = -100# / g.SPct * g.PNom / st.FNom * DynamicKdByTime(g.EquipType, _
-                              SecBetween(wsRaw.Cells(res.StartRow, timeCol).Value, wsRaw.Cells(r, timeCol).Value)) * dFr
+        ws.Cells(outR, 5).Value = preqStep
         ws.Cells(outR, 6).Value = dFr
         ws.Cells(outR, 8).Value = targetPreq + tolPreq
         ws.Cells(outR, 9).Value = targetPreq - tolPreq
         ws.Cells(outR, 13).Value = dPmaxRel
         ws.Cells(outR, 14).Value = dPminRel
-        ws.Cells(outR, 15).Value = res.P0 + targetPreq
+        ws.Cells(outR, 15).Value = res.P0 + preqStep
         ws.Cells(outR, 16).Value = res.P0 + targetPreq + tolPreq
         ws.Cells(outR, 17).Value = res.P0 + targetPreq - tolPreq
         ws.Cells(outR, 18).Value = res.PMaxEff
