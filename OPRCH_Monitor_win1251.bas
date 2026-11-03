@@ -7,15 +7,26 @@ Option Explicit
 ' Per-station:    data sheet <Ст>_Сумма[_<Пп>] +  chart sheet <...>_Граф
 ' Extra sheets:   Summary, Log
 '
-' Версия: 1.6.0
+' Версия: 1.7.0
 ' Нормативная база: Методические указания по оценке участия генерирующего
 '   оборудования в ОПРЧ (Приложение 14 к Техтребованиям, ред. 01.03.2026):
-'   п. 4.2.1-4.2.3 (формулы dPп, Pтп, dFр), 4.2.6 (усреднение P/f),
-'   4.2.7-4.2.8 (допуск 1 %Pном), 4.2.10 (оценка по сумме станции ->
-'   индивидуальная оценка только при нарушении), 4.2.11 (наличие реакции
-'   РЧВ турбины через 15 с), 4.2.14.1 (дефицит хотя бы в один из периодов),
-'   Приложение (Kд(t): ТЭС 0.5 до 15 с -> 1.0 к 300/360/420 с;
-'   ПГУ 0.25 до 15 с -> 0.5 к 30 с -> 1.0 к 120 с).
+'   п. 4.1.2/4.1.3 (применимость количественной/качественной оценки),
+'   п. 4.2.1-4.2.3 (формулы dPп, Pтп, dFр), 4.2.5 (выбор tр в пользу момента,
+'   фиксирующего несоответствие), 4.2.6 (усреднение P/f, колебания >5 периодов),
+'   4.2.7-4.2.8 (допуск 1 %Pном), 4.2.9 (квазиустановившиеся интервалы),
+'   4.2.10 (оценка неблочной части по сумме станции -> индивидуальная оценка
+'   только при нарушении), 4.2.11 (наличие реакции РЧВ турбины через 15 с),
+'   4.2.14.1 (дефицит хотя бы в один из периодов), 4.2.14.4 (колебания),
+'   4.4.1 (типы реакции 1-8), 4.4.3/4.4.4 (отсутствие «адекватной» реакции
+'   без РМ / с РМ), Приложение (Kд(t): ТЭС 0.5 до 15 с -> 1.0 к 300/360/420 с;
+'   ПГУ 0.25 до 15 с -> 0.5 к 30 с -> 1.0 к 120 с; квазиустановившийся режим:
+'   |f - fср(±15 с)| <= 10 мГц; Pтреб не более 10 %Pном; идентификация
+'   переходной функции h(15 с), п. 6.2 - справочно).
+' Режим работы (Config W13): «Авария» - мониторинг реальных событий: для
+'   оборудования без регулятора мощности (Config U = 0) принимаются S = 6 %,
+'   fнч = 0.15 Гц независимо от Config (максимально допустимые по Техтребованиям);
+'   «Испытание» - контрольные испытания: используются фактические S/fнч из Config,
+'   проверка применимости по п. 4.1.2/4.1.3 не выполняется.
 ' Основные критерии:
 '   - Количественный (|Pфакт|/|Pтреб|) с допуском и направлением;
 '   - Перерегулирование (>100%+допуск);
@@ -33,19 +44,47 @@ Option Explicit
 '   - Дефицит первичной мощности по точкам окна (п. 4.2.14.1): макс. %Pном и длительность;
 '   - Вердикт по сумме станции (п. 4.2.10) со строкой в Summary и выводом о
 '     необходимости индивидуальной оценки генераторов.
+'   - 1.7.0: режим «Авария/Испытание»; признак РМ и компоновка (блок/неблок);
+'     применимость оценки (п. 4.1.2/4.1.3); несколько событий в одной выборке
+'     (листы с суффиксом _E2, _E3...); выбор tр как худшей квазиустановившейся
+'     точки (п. 4.2.5/4.2.9, Приложение); колебания мощности (п. 4.2.14.4);
+'     контроль качества телеизмерений; тип реакции по п. 4.4.1; оценка h(15 с)
+'     идентификацией переходной функции (Приложение п. 6.2, справочно); лист
+'     «Протокол»; экспорт отчёта в PDF; нестрогий поиск колонок RawData;
+'     оформление графиков по И.2 (сетка не реже 15 с, подписи осей).
 ' ==========================================================
 
-Public Const OPRCH_VERSION As String = "1.6.0"
+Public Const OPRCH_VERSION As String = "1.7.0"
 
 Private Const SH_RAW As String = "RawData"
 Private Const SH_CFG As String = "Config"
 Private Const SH_SUM As String = "Summary"
 Private Const SH_LOG As String = "Log"
+Private Const SH_PROT As String = "Протокол"
 Private Const CHART_SUFFIX As String = "_Граф"
+
+' Нормативные константы МУ (Приложение 14)
+Private Const QUANT_DF_HZ As Double = 0.2          ' п. 4.1.2: колич. оценка при |dF| >= 0.2 Гц
+Private Const QUANT_MIN_SEC_TES As Double = 30#    ' п. 4.1.2: длительность >= 30 с (ТЭС)
+Private Const QUANT_MIN_SEC_GPA As Double = 60#    ' п. 4.1.2: длительность >= 1 мин (ГПА/ДГУ/ГЭС)
+Private Const QUAL_JUMP_SEC As Double = 10#        ' п. 4.1.3: резкое отклонение - за время <= 10 с
+Private Const QUAL_MIN_SEC As Double = 20#         ' п. 4.1.3: продолжительность >= 20 с
+Private Const QUAL_RM_DF_HZ As Double = 0.15       ' п. 4.4.4: с РМ - выход за 50±0.15 Гц
+Private Const QUAL_NORM_DF_MAX_HZ As Double = 0.4  ' п. 4.4.3: без РМ - скачок ±0.2..0.4 Гц
+Private Const NO_RM_S_PCT As Double = 6#           ' без РМ в режиме «Авария»: S = 6 %
+Private Const NO_RM_FNCH_HZ As Double = 0.15       ' без РМ в режиме «Авария»: fнч = 0.15 Гц
+Private Const QS_HALF_WINDOW_SEC As Double = 15#   ' Приложение: квазиуст. режим - отрезок ±15 с
+Private Const QS_TOL_HZ As Double = 0.01           ' Приложение: |f - fср| <= 10 мГц
+Private Const OSC_MIN_PERIODS As Long = 5          ' п. 4.2.6/4.2.14.4: колебания > 5 периодов
+Private Const OSC_MIN_AMPL_PCT As Double = 1#      ' п. 4.2.14.4: амплитуда > 1 %Pном
+Private Const TELEM_MAX_REPEAT As Long = 11        ' Прил. 1 п. 6.1.8.3: не более 11 одинаковых подряд
+Private Const H15_REF As Double = 0.3              ' ориентир для h(15 с) (Приложение п. 6.2, справочно)
+Private Const EVENT_MIN_OUTSIDE_SEC As Double = 5# ' фильтр коротких выбросов частоты при поиске событий
 
 Private m_LogRow As Long
 Private m_KdProfiles As Object   ' key=EQUIPTYPE, value=Array(t0,kd0,t1,kd1,t2,kd2,t3,kd3)
 Private m_ChartOpts As Object    ' key=REL_*/ABS_*, value=Boolean
+Private m_Protocol As Collection ' строки текстового протокола (лист «Протокол»)
 
 Private Type TSettings
     FNom As Double
@@ -59,6 +98,18 @@ Private Type TSettings
     SteadyWindowSec As Double
     React15ThrPct As Double   ' порог наличия реакции РЧВ через 15 с, %Pном (п. 4.2.11)
     AvgWindowSec As Double    ' окно усреднения P0/Pтек, с (п. 4.2.6); 0 = текущие значения
+    Mode As String            ' «Авария» / «Испытание»
+    IsEmergency As Boolean    ' True = «Авария»
+    MaxEventSec As Double     ' макс. длительность окна одного события, с
+    MaxEvents As Long         ' макс. число событий в выборке (1 = только первое)
+    MaxReqPct As Double       ' ограничение Pтреб, %Pном (Приложение: 10 %; 0 = без ограничения)
+End Type
+
+' Событие (интервал выхода частоты за fнч)
+Private Type TEvent
+    StartRow As Long          ' последняя строка до выхода за fнч (t0)
+    FirstExceedRow As Long    ' первая строка за fнч
+    EndRow As Long            ' конец окна события
 End Type
 
 Private Type TGenCfg
@@ -82,6 +133,11 @@ Private Type TGenCfg
     Paroprovod As String
     PMax As Double          ' максимальная эксплуатационная мощность, МВт
     PMin As Double          ' технический минимум, МВт
+    HasRM As Boolean        ' оснащён регулятором мощности (Config U; пусто = 1)
+    Layout As String        ' «блок» / «неблок» (Config V; пусто = по типу оборудования)
+    SPctCfg As Double       ' S из Config (до подстановки 6 % для оборудования без РМ)
+    FnchCfg As Double       ' fнч из Config (до подстановки 0.15 Гц)
+    ForcedNoRM As Boolean   ' True, если в режиме «Авария» применены S = 6 %, fнч = 0.15 Гц
 End Type
 
 Private Type TGenResult
@@ -130,6 +186,33 @@ Private Type TGenResult
     DeficitMaxPct As Double ' макс. дефицит первичной мощности в окне, %Pном (п. 4.2.14.1)
     DeficitSec As Double    ' суммарная длительность дефицита, с
     Verdict As String       ' итоговый вывод по генератору
+    ' --- 1.7.0 ---
+    EventIdx As Long        ' номер события в выборке (1..N)
+    EventEndRow As Long     ' конец окна события
+    QuantApplicable As Boolean  ' п. 4.1.2
+    QualApplicable As Boolean   ' п. 4.1.3 / 4.4.3 / 4.4.4
+    Applicability As String     ' текст статуса применимости
+    DfMaxEvent As Double        ' макс. отклонение частоты за событие (со знаком), Гц
+    DurAbove02Sec As Double     ' длительность |dF| >= 0.2 Гц (непрерывная макс.), с
+    JumpSec As Double           ' время нарастания отклонения до максимума, с
+    DurOutsideSec As Double     ' длительность |dF| > fнч, с
+    TrRow As Long               ' строка tр (п. 4.2.5: худшая квазиустановившаяся точка)
+    TrTime As Variant
+    TrSec As Double             ' tр - t0, с
+    TrQuasiSteady As Boolean    ' tр в квазиустановившемся режиме по частоте
+    PReqRef As Double           ' Pтреб на контрольном интервале (Config W5), МВт
+    PFactRef As Double          ' Pфакт на контрольном интервале, МВт
+    OscViolation As Boolean     ' п. 4.2.14.4
+    OscPeriods As Long
+    OscAmplPct As Double
+    OscNote As String
+    TelemetryOK As Boolean
+    TelemetryNote As String
+    ReactionType As String      ' п. 4.4.1: «1 - адекватная» ... «8 - телеизмерение»
+    ReactionCode As Long
+    QualClauseVerdict As String ' вывод по п. 4.4.3/4.4.4
+    H15 As Double               ' оценка переходной функции h(15 с); -999 = не вычислено
+    H15Note As String
 End Type
 
 ' Результат оценки по сумме станции (п. 4.2.10)
@@ -163,6 +246,13 @@ Private Type TStationResult
     Verdict As String
     SheetName As String
     ChartSheetName As String
+    EventIdx As Long
+    IsNeblok As Boolean         ' в сумме есть генераторы неблочной компоновки (п. 4.2.10 применим)
+    QuantApplicable As Boolean
+    Applicability As String
+    TrTime As Variant
+    TrSec As Double
+    TrQuasiSteady As Boolean
 End Type
 
 ' ==========================================================
@@ -186,18 +276,18 @@ Public Sub SetupOPRCHTemplate()
     wsRaw.Range("D1").Value = "ТГ-2"
     wsRaw.Range("E1").Value = "ТГ-3"
 
-    wsCfg.Range("A1:T1").Value = Array( _
+    wsCfg.Range("A1:V1").Value = Array( _
         "Станция", "Генератор", "Колонка_мощности", "Колонка_частоты", "Тип_оборудования", _
         "Pном, МВт", "S, %", "fнч, Гц", "Вкл (1/0)", "Кач_вкл (1/0)", _
         "t5, c", "dP5, %Pном", "t10, c", "dP10, %Pном", "Уст_допуск, %Pном", _
         "В сумму станции (1/0)", "Контр_уст (1/0)", "Паропровод", _
-        "Pmax, МВт", "Pmin, МВт" _
+        "Pmax, МВт", "Pmin, МВт", "РМ (1/0)", "Компоновка (блок/неблок)" _
     )
 
-    wsCfg.Cells(2, 1).Resize(1, 20).Value = Array("Сосногорская ТЭЦ", "ТГ-5", "ТГ-5", "Частота", "ПТУ_неблок", 55, 4.2, 0.105, 1, 1, 15, 5, 420, 10, 1, 1, 1, "", 55, 15)
-    wsCfg.Cells(3, 1).Resize(1, 20).Value = Array("Сосногорская ТЭЦ", "ТГ-7", "ТГ-7", "Частота", "ПТУ_неблок", 60, 4.5, 0.11, 1, 1, 15, 5, 420, 10, 1, 1, 1, "", 60, 20)
-    wsCfg.Cells(4, 1).Resize(1, 20).Value = Array("ТЭЦ СЛПК", "ТГ-2Э", "ТГ-2Э", "Частота", "ПТУ_неблок", 50, 4.5, 0.15, 1, 1, 15, 5, 420, 10, 1, 1, 1, "Э", 50, 15)
-    wsCfg.Cells(5, 1).Resize(1, 20).Value = Array("ТЭЦ СЛПК", "ТГ-5У", "ТГ-5У", "Частота", "ПТУ_неблок", 87.7, 4.2, 0.15, 1, 1, 15, 5, 420, 10, 1, 1, 1, "У", 87.7, 25)
+    wsCfg.Cells(2, 1).Resize(1, 22).Value = Array("Сосногорская ТЭЦ", "ТГ-5", "ТГ-5", "Частота", "ПТУ_неблок", 55, 4.2, 0.105, 1, 1, 15, 5, 420, 10, 1, 1, 1, "", 55, 15, 1, "неблок")
+    wsCfg.Cells(3, 1).Resize(1, 22).Value = Array("Сосногорская ТЭЦ", "ТГ-7", "ТГ-7", "Частота", "ПТУ_неблок", 60, 4.5, 0.11, 1, 1, 15, 5, 420, 10, 1, 1, 1, "", 60, 20, 1, "неблок")
+    wsCfg.Cells(4, 1).Resize(1, 22).Value = Array("ТЭЦ СЛПК", "ТГ-2Э", "ТГ-2Э", "Частота", "ПТУ_неблок", 50, 4.5, 0.15, 1, 1, 15, 5, 420, 10, 1, 1, 1, "Э", 50, 15, 1, "неблок")
+    wsCfg.Cells(5, 1).Resize(1, 22).Value = Array("ТЭЦ СЛПК", "ТГ-5У", "ТГ-5У", "Частота", "ПТУ_неблок", 87.7, 4.2, 0.15, 1, 1, 15, 5, 420, 10, 1, 1, 1, "У", 87.7, 25, 1, "неблок")
 
     wsCfg.Range("W1").Value = "Глобальные настройки"
     wsCfg.Cells(2, 23).Resize(1, 2).Value = Array("fном, Гц", 50)
@@ -211,6 +301,11 @@ Public Sub SetupOPRCHTemplate()
     wsCfg.Cells(10, 23).Resize(1, 2).Value = Array("Окно установив., с", 30)
     wsCfg.Cells(11, 23).Resize(1, 2).Value = Array("Порог реакции 15 с, %Pном", 0.5)
     wsCfg.Cells(12, 23).Resize(1, 2).Value = Array("Усреднение P0/Pтек, с (0=текущие)", 0)
+    wsCfg.Cells(13, 23).Resize(1, 2).Value = Array("Режим (Авария/Испытание)", "Авария")
+    wsCfg.Cells(14, 23).Resize(1, 2).Value = Array("Макс. окно события, с", 600)
+    wsCfg.Cells(15, 23).Resize(1, 2).Value = Array("Макс. число событий (1=только первое)", 3)
+    wsCfg.Cells(16, 23).Resize(1, 2).Value = Array("Ограничение Pтреб, %Pном (0=нет)", 10)
+    wsCfg.Range("X13").NumberFormat = "@"
 
     ' Профили Kд(t) по Приложению к МУ оценки участия в ОПРЧ (Приложение 14 к Техтребованиям):
     '   ТЭС (кроме ПГУ): Kд = 0.5 на [0;15] с, далее линейно до 1.0 к T
@@ -243,6 +338,56 @@ Public Sub SetupOPRCHTemplate()
     MsgBox "Шаблон создан. Заполните RawData/Config и нажмите кнопку 'Запустить мониторинг ОПРЧ'.", vbInformation
 End Sub
 
+' Экспорт отчёта (Summary, Протокол, Log и листы графиков) в PDF рядом с книгой
+Public Sub ExportOPRCHReport()
+    On Error GoTo EH
+    Dim ws As Worksheet, names As Collection, i As Long
+    Dim arr() As String, pdfPath As String, baseName As String
+    Set names = New Collection
+    For Each ws In ThisWorkbook.Worksheets
+        If ws.Name = SH_SUM Or ws.Name = SH_PROT Or ws.Name = SH_LOG Then
+            names.Add ws.Name
+        ElseIf Right$(ws.Name, Len(CHART_SUFFIX)) = CHART_SUFFIX Or Right$(ws.Name, 3) = "_Гр" Then
+            names.Add ws.Name
+        End If
+    Next ws
+    If names.Count = 0 Then
+        MsgBox "Нет листов для экспорта. Сначала запустите мониторинг.", vbExclamation
+        Exit Sub
+    End If
+    ReDim arr(0 To names.Count - 1)
+    For i = 1 To names.Count
+        arr(i - 1) = CStr(names(i))
+    Next i
+    baseName = ThisWorkbook.Name
+    If InStrRev(baseName, ".") > 0 Then baseName = Left$(baseName, InStrRev(baseName, ".") - 1)
+    If Len(ThisWorkbook.Path) = 0 Then
+        MsgBox "Сначала сохраните книгу - PDF создаётся в той же папке.", vbExclamation
+        Exit Sub
+    End If
+    pdfPath = ThisWorkbook.Path & Application.PathSeparator & baseName & "_Отчет_ОПРЧ_" & Format(Now, "yyyymmdd_hhnnss") & ".pdf"
+    For i = 0 To UBound(arr)
+        With ThisWorkbook.Worksheets(arr(i)).PageSetup
+            On Error Resume Next
+            .Orientation = xlLandscape
+            .Zoom = False
+            .FitToPagesWide = 1
+            .FitToPagesTall = False
+            On Error GoTo EH
+        End With
+    Next i
+    ThisWorkbook.Worksheets(arr).Select
+    ActiveSheet.ExportAsFixedFormat Type:=xlTypePDF, Filename:=pdfPath, Quality:=xlQualityStandard, _
+                                    IncludeDocProperties:=True, IgnorePrintAreas:=False, OpenAfterPublish:=False
+    ThisWorkbook.Worksheets(SH_SUM).Select
+    MsgBox "Отчёт сохранён: " & pdfPath, vbInformation
+    Exit Sub
+EH:
+    On Error Resume Next
+    ThisWorkbook.Worksheets(SH_SUM).Select
+    MsgBox "Ошибка экспорта в PDF: " & Err.Description, vbCritical
+End Sub
+
 Public Sub AnalyzeOPRCH()
     On Error GoTo EH
 
@@ -253,6 +398,8 @@ Public Sub AnalyzeOPRCH()
     Dim targetSheets As Collection
     Dim stepName As String
     Dim t0Run As Double
+    Dim evList() As TEvent, nEv As Long, k As Long
+    Dim fCol As Long
 
     t0Run = Timer
     stepName = "Подготовка листов"
@@ -273,6 +420,10 @@ Public Sub AnalyzeOPRCH()
 
     stepName = "Подготовка лога"
     InitLog
+    Set m_Protocol = New Collection
+    AppendLog "INFO", "Settings", "Режим: " & st.Mode & IIf(st.IsEmergency, _
+        " (для оборудования без РМ принимаются S = " & NO_RM_S_PCT & " %, fнч = " & NO_RM_FNCH_HZ & " Гц)", _
+        " (используются фактические S/fнч из Config; применимость по п. 4.1.2/4.1.3 не проверяется)")
 
     stepName = "Валидация Config/RawData"
     ValidateInputs wsRaw, wsCfg, st, timeCol
@@ -287,12 +438,12 @@ Public Sub AnalyzeOPRCH()
 
     stepName = "Подготовка Summary"
     wsSummary.Cells.Clear
-    wsSummary.Range("A1:AN1").Value = Array( _
+    wsSummary.Range("A1:AZ1").Value = Array( _
         "Станция", "Генератор", "Тип", _
         "Старт (расч.)", "Время выхода за fнч", _
-        "P0, МВт", "Pтек, МВт", "Pуст_сред, МВт", _
-        "dF, Гц", "dFr, Гц", _
-        "Pтреб, МВт", "Pфакт, МВт", _
+        "P0, МВт", "Pтек(tр), МВт", "Pуст_сред, МВт", _
+        "dF, Гц", "dFr(tр), Гц", _
+        "Pтреб(tр), МВт", "Pфакт(tр), МВт", _
         "Амплитуда, %Pном", "Масштаб события", _
         "Колич. %", "Колич. статус", "Перерегулирование", _
         "Характер процесса", "Экстремумов", _
@@ -303,7 +454,11 @@ Public Sub AnalyzeOPRCH()
         "Pтреб исх., МВт", "Ограничение", _
         "Примечание", _
         "Реакция 15 с", "dP15, МВт", "Дефицит макс, %Pном", "Длит. дефицита, с", _
-        "Вывод" _
+        "Вывод", _
+        "Событие", "Применимость (п. 4.1.2/4.1.3)", "tр", "tр, с от старта", "Режим в tр", _
+        "Pтреб(Tинт), МВт", "Pфакт(Tинт), МВт", _
+        "Колебания (п. 4.2.14.4)", "Качество ТИ", "Тип реакции (п. 4.4.1)", _
+        "h(15 с), Прил. п. 6.2", "Кач. вывод (п. 4.4.3/4.4.4)" _
     )
     outRow = 2
 
@@ -311,7 +466,7 @@ Public Sub AnalyzeOPRCH()
         stepName = "Чтение Config, строка " & r
         If Len(Trim$(CStr(wsCfg.Cells(r, 2).Value))) = 0 Then GoTo NextGen
 
-        g = ReadGenCfg(wsCfg, r)
+        g = ReadGenCfgEff(wsCfg, r, st)
         If Not g.Enabled Then GoTo NextGen
 
         If Not ValidateGenCfg(g) Then
@@ -321,15 +476,24 @@ Public Sub AnalyzeOPRCH()
             GoTo NextGen
         End If
 
-        stepName = "Расчет генератора " & g.Generator
-        res = AnalyzeOneGenerator(wsRaw, st, g)
-        stepName = "Запись листа данных " & g.Generator
-        WriteGeneratorSheet wsRaw, st, g, res
-        stepName = "Запись графика " & g.Generator
-        WriteGeneratorChartSheet st, g, res
-        stepName = "Запись Summary для " & g.Generator
-        WriteSummaryRow wsSummary, outRow, g, res
-        outRow = outRow + 1
+        stepName = "Поиск событий для " & g.Generator
+        fCol = FindHeaderColFuzzy(wsRaw, g.FreqHeader)
+        If fCol = 0 Then Err.Raise vbObjectError + 2102, , "Не найдена колонка частоты '" & g.FreqHeader & "' для " & g.Generator
+        nEv = FindEvents(wsRaw, timeCol, fCol, st, g.Fnch, evList)
+        If nEv > 1 Then AppendLog "INFO", g.Station & "/" & g.Generator, "Найдено событий (выходов за fнч): " & nEv
+
+        For k = 1 To nEv
+            stepName = "Расчет генератора " & g.Generator & " (событие " & k & ")"
+            res = AnalyzeOneGenerator(wsRaw, st, g, evList(k), k)
+            stepName = "Запись листа данных " & g.Generator
+            WriteGeneratorSheet wsRaw, st, g, res
+            stepName = "Запись графика " & g.Generator
+            WriteGeneratorChartSheet st, g, res
+            stepName = "Запись Summary для " & g.Generator
+            WriteSummaryRow wsSummary, outRow, g, res
+            AddProtocolGenerator g, res
+            outRow = outRow + 1
+        Next k
 
 NextGen:
     Next r
@@ -338,12 +502,18 @@ NextGen:
     BuildStationAggregates wsRaw, wsCfg, wsSummary, st, outRow
 
     stepName = "Оформление Summary"
-    wsSummary.Columns("A:AN").AutoFit
+    wsSummary.Columns("A:AZ").AutoFit
     wsSummary.Columns("AN").ColumnWidth = 90
+    wsSummary.Columns("AZ").ColumnWidth = 70
     wsSummary.Columns("AI").ColumnWidth = 60
+    wsSummary.Columns("AP").ColumnWidth = 45
     wsSummary.Range("D:E").NumberFormat = "dd.mm.yyyy hh:mm:ss"
+    wsSummary.Range("AQ:AQ").NumberFormat = "dd.mm.yyyy hh:mm:ss"
     ApplySummaryConditionalFormat wsSummary
     WriteVersionStamp wsSummary, wsRaw, t0Run
+
+    stepName = "Формирование протокола"
+    WriteProtocolSheet st, wsRaw
 
     stepName = "Финализация лога и кнопок"
     FinalizeLog
@@ -389,6 +559,10 @@ Public Sub ApplyPresetsToConfig()
         If NzD(wsCfg.Cells(r, 14).Value, 0) <= 0 Then wsCfg.Cells(r, 14).Value = pr.Dp10Pct: changed = changed + 1
         If NzD(wsCfg.Cells(r, 15).Value, 0) <= 0 Then wsCfg.Cells(r, 15).Value = pr.SteadyTolPct: changed = changed + 1
         If NzD(wsCfg.Cells(r, 8).Value, -1) < 0 Then wsCfg.Cells(r, 8).Value = pr.Fnch: changed = changed + 1
+        If Len(Trim$(CStr(wsCfg.Cells(r, 21).Value))) = 0 Then wsCfg.Cells(r, 21).Value = 1: changed = changed + 1
+        If Len(Trim$(CStr(wsCfg.Cells(r, 22).Value))) = 0 Then
+            wsCfg.Cells(r, 22).Value = IIf(InStr(UCase$(et), "НЕБЛОК") > 0, "неблок", "блок"): changed = changed + 1
+        End If
 NX:
     Next r
     MsgBox "Пресеты применены. Заполнено ячеек: " & changed, vbInformation
@@ -398,12 +572,13 @@ End Sub
 ' Анализ одного генератора
 ' ==========================================================
 
-Private Function AnalyzeOneGenerator(ByVal wsRaw As Worksheet, ByRef st As TSettings, ByRef g As TGenCfg) As TGenResult
+Private Function AnalyzeOneGenerator(ByVal wsRaw As Worksheet, ByRef st As TSettings, ByRef g As TGenCfg, _
+                                     ByRef ev As TEvent, ByVal evIdx As Long) As TGenResult
     On Error GoTo EH
 
     Dim res As TGenResult
     Dim timeCol As Long, pCol As Long, fCol As Long
-    Dim startRow As Long, endQ As Long, endQual As Long, firstExceedRow As Long
+    Dim startRow As Long, endQ As Long, endQual As Long, firstExceedRow As Long, evEnd As Long
     Dim p0 As Double, ptek As Double, df As Double, dfr As Double, preq As Double, pfact As Double
     Dim kdQuant As Double, tQuantSec As Double
     Dim qpct As Double, qpass As Boolean
@@ -411,36 +586,30 @@ Private Function AnalyzeOneGenerator(ByVal wsRaw As Worksheet, ByRef st As TSett
 
     calcStep = "Поиск колонок"
     timeCol = FindHeaderCol(wsRaw, "Время")
-    pCol = FindHeaderCol(wsRaw, g.PowerHeader)
-    fCol = FindHeaderCol(wsRaw, g.FreqHeader)
+    pCol = FindHeaderColFuzzy(wsRaw, g.PowerHeader)
+    fCol = FindHeaderColFuzzy(wsRaw, g.FreqHeader)
     If pCol = 0 Then Err.Raise vbObjectError + 2101, , "Не найдена колонка мощности '" & g.PowerHeader & "' для " & g.Generator
     If fCol = 0 Then Err.Raise vbObjectError + 2102, , "Не найдена колонка частоты '" & g.FreqHeader & "' для " & g.Generator
 
-    calcStep = "Определение стартовой строки"
-    startRow = ResolveStartRow(wsRaw, timeCol, fCol, st, g.Fnch, firstExceedRow)
-    calcStep = "Определение конца количественного интервала"
+    calcStep = "Границы события"
+    startRow = ev.StartRow
+    firstExceedRow = ev.FirstExceedRow
+    evEnd = ev.EndRow
+    If evEnd < startRow Then evEnd = startRow
+    res.EventIdx = evIdx
+    res.EventEndRow = evEnd
+    calcStep = "Определение конца контрольного интервала"
     endQ = RowByTimeOffset(wsRaw, timeCol, startRow, st.QuantIntervalSec)
     calcStep = "Определение конца качественного интервала"
     endQual = RowByTimeOffset(wsRaw, timeCol, startRow, g.T10Sec)
 
-    calcStep = "Чтение P0/Pтек"
+    calcStep = "Чтение P0"
     ' п. 4.2.6: значения P вычисляются как средние на интервале вблизи момента
     ' оценки; при стабильных значениях допускается брать текущие (AvgWindowSec = 0).
     p0 = AvgPowerBackward(wsRaw, pCol, timeCol, startRow, st.AvgWindowSec)
-    ptek = AvgPowerBackward(wsRaw, pCol, timeCol, endQ, st.AvgWindowSec)
-    calcStep = "Расчет dF/dFr"
-    df = MaxAbsDeviationInWindow(wsRaw, fCol, startRow, endQ, st.FNom)
-    dfr = DeadbandDeviation(df, g.Fnch)
 
-    calcStep = "Расчет требуемой мощности"
-    Dim preqOrig As Double
-    tQuantSec = SecBetween(wsRaw.Cells(startRow, timeCol).Value, wsRaw.Cells(endQ, timeCol).Value)
-    kdQuant = DynamicKdByTime(g.EquipType, tQuantSec)
-    If dfr <> 0 Then
-        preqOrig = -100# / g.SPct * g.PNom / st.FNom * kdQuant * dfr
-    Else
-        preqOrig = 0
-    End If
+    calcStep = "Применимость оценки (п. 4.1.2/4.1.3)"
+    EvaluateApplicability wsRaw, st, g, fCol, timeCol, startRow, firstExceedRow, evEnd, res
 
     calcStep = "Учет Pmax/Pmin (резерв)"
     Dim pMaxEff As Double, pMinEff As Double
@@ -454,6 +623,41 @@ Private Function AnalyzeOneGenerator(ByVal wsRaw As Worksheet, ByRef st As TSett
     If reservePlus < 0 Then reservePlus = 0
     If reserveMinus < 0 Then reserveMinus = 0
 
+    calcStep = "Контрольный интервал (Config W5): Pтреб/Pфакт"
+    Dim dfRef As Double, dfrRef As Double, preqRefOrig As Double, preqRef As Double
+    tQuantSec = SecBetween(wsRaw.Cells(startRow, timeCol).Value, wsRaw.Cells(endQ, timeCol).Value)
+    dfRef = MaxAbsDeviationInWindow(wsRaw, fCol, startRow, endQ, st.FNom)
+    dfrRef = DeadbandDeviation(dfRef, g.Fnch)
+    preqRefOrig = PReqCalc(g.SPct, g.PNom, st.FNom, DynamicKdByTime(g.EquipType, tQuantSec), dfrRef, st.MaxReqPct)
+    preqRef = ClampReserve(preqRefOrig, reservePlus, reserveMinus)
+    res.PReqRef = preqRef
+    res.PFactRef = AvgPowerBackward(wsRaw, pCol, timeCol, endQ, st.AvgWindowSec) - p0
+
+    calcStep = "Выбор tр (п. 4.2.5/4.2.9)"
+    ' tр - худшая квазиустановившаяся по частоте точка окна события (макс. дефицит);
+    ' при отсутствии квазиустановившихся точек - конец контрольного интервала.
+    SelectEvaluationPoint wsRaw, st, g, pCol, fCol, timeCol, startRow, firstExceedRow, evEnd, endQ, p0, reservePlus, reserveMinus, res
+    endQ = res.TrRow
+    tQuantSec = res.TrSec
+
+    calcStep = "Чтение Pтек(tр)"
+    ptek = AvgPowerBackward(wsRaw, pCol, timeCol, endQ, st.AvgWindowSec)
+    calcStep = "Расчет dF/dFr"
+    df = MaxAbsDeviationInWindow(wsRaw, fCol, startRow, evEnd, st.FNom)
+    If res.TrQuasiSteady Then
+        ' п. 4.2.6: в квазиустановившемся режиме - среднее значение частоты на отрезке ±15 с
+        dfr = DeadbandDeviation(MeanFreqAround(wsRaw, fCol, timeCol, endQ, QS_HALF_WINDOW_SEC, st.FNom) - st.FNom, g.Fnch)
+    Else
+        dfr = DeadbandDeviation(MaxAbsDeviationInWindow(wsRaw, fCol, startRow, endQ, st.FNom), g.Fnch)
+    End If
+    If dfr = 0 And dfrRef <> 0 Then dfr = dfrRef
+
+    calcStep = "Расчет требуемой мощности"
+    Dim preqOrig As Double
+    kdQuant = DynamicKdByTime(g.EquipType, tQuantSec)
+    preqOrig = PReqCalc(g.SPct, g.PNom, st.FNom, kdQuant, dfr, st.MaxReqPct)
+
+    calcStep = "Ограничение Pтреб резервом"
     ' Капинг: реально достижимое значение с учётом эксплуатационного диапазона
     preq = preqOrig
     If preq > reservePlus Then
@@ -512,13 +716,7 @@ Private Function AnalyzeOneGenerator(ByVal wsRaw As Worksheet, ByRef st As TSett
     ' Используется как цель качественных ступеней t5/t10 (п. 4.2.2, 4.2.7).
     calcStep = "Статический Pтреб"
     Dim preqStatic As Double
-    If dfr <> 0 Then
-        preqStatic = -100# / g.SPct * g.PNom / st.FNom * 1# * dfr
-    Else
-        preqStatic = 0
-    End If
-    If preqStatic > reservePlus Then preqStatic = reservePlus
-    If preqStatic < -reserveMinus Then preqStatic = -reserveMinus
+    preqStatic = ClampReserve(PReqCalc(g.SPct, g.PNom, st.FNom, 1#, dfr, st.MaxReqPct), reservePlus, reserveMinus)
     res.PReqStatic = preqStatic
     res.PMaxEff = pMaxEff
     res.PMinEff = pMinEff
@@ -573,8 +771,10 @@ Private Function AnalyzeOneGenerator(ByVal wsRaw As Worksheet, ByRef st As TSett
     End If
 
     calcStep = "Дефицит первичной мощности по точкам окна (п. 4.2.14.1)"
+    ' Окно наблюдения - всё событие (до возврата частоты в зону нечувствительности
+    ' или до границы окна события), а не только контрольный интервал.
     Dim defMaxPct As Double, defSec As Double
-    EvaluateDeficit wsRaw, st, pCol, fCol, timeCol, startRow, endQ, p0, g.PNom, g.SPct, g.Fnch, _
+    EvaluateDeficit wsRaw, st, pCol, fCol, timeCol, startRow, evEnd, p0, g.PNom, g.SPct, g.Fnch, _
                     g.EquipType, reservePlus, reserveMinus, defMaxPct, defSec
     res.DeficitMaxPct = defMaxPct
     res.DeficitSec = defSec
@@ -582,11 +782,24 @@ Private Function AnalyzeOneGenerator(ByVal wsRaw As Worksheet, ByRef st As TSett
     calcStep = "Характер переходного процесса"
     EvaluateTransient wsRaw, st, g, res, pCol, timeCol
 
+    calcStep = "Колебания мощности (п. 4.2.6, 4.2.14.4)"
+    EvaluateOscillations wsRaw, st, g, res, pCol, fCol, timeCol, startRow, evEnd
+
+    calcStep = "Качество телеизмерений"
+    EvaluateTelemetry wsRaw, g, res, pCol, timeCol, startRow, evEnd
+
     calcStep = "Качественный критерий"
     EvaluateQualitative wsRaw, st, g, res, pCol, fCol, timeCol
 
+    calcStep = "Идентификация переходной функции h(15 с) (Прил. п. 6.2)"
+    res.H15 = IdentifyH15(wsRaw, st, g, pCol, fCol, timeCol, firstExceedRow, p0, res.H15Note)
+
+    calcStep = "Тип реакции (п. 4.4.1)"
+    ClassifyReactionType wsRaw, st, g, res, pCol, fCol, timeCol, startRow, evEnd
+
     calcStep = "Итоговый вывод"
     res.Verdict = BuildGeneratorVerdict(g, res, st)
+    If Left$(res.Verdict, 9) = "НАРУШЕНИЕ" Then AppendLog "WARN", g.Station & "/" & g.Generator, res.Verdict
 
     AnalyzeOneGenerator = res
     Exit Function
@@ -601,12 +814,12 @@ End Function
 ' ----------------------------------------------------------
 Private Function AvgPowerBackward(ByVal wsRaw As Worksheet, ByVal pCol As Long, ByVal timeCol As Long, _
                                   ByVal row As Long, ByVal windowSec As Double) As Double
-    Dim r1 As Long, r As Long, sumP As Double, cnt As Long
+    Dim r1 As Long, r2 As Long, r As Long, sumP As Double, cnt As Long
     If windowSec <= 0 Then
         AvgPowerBackward = NzD(wsRaw.Cells(row, pCol).Value, 0)
         Exit Function
     End If
-    r1 = RowByTimeOffset(wsRaw, timeCol, row, -windowSec)
+    WindowRowsAround wsRaw, timeCol, row, windowSec, r1, r2
     If r1 < 2 Then r1 = 2
     If r1 > row Then r1 = row
     For r = r1 To row
@@ -648,9 +861,8 @@ Private Sub EvaluateReaction15(ByVal wsRaw As Worksheet, ByRef st As TSettings, 
     dfr15 = DeadbandDeviation(NzD(wsRaw.Cells(row15, fCol).Value, st.FNom) - st.FNom, fnch)
     preq15 = 0
     If dfr15 <> 0 And sPct > 0 Then
-        preq15 = -100# / sPct * pNom / st.FNom * DynamicKdByTime(equipType, 15#) * dfr15
-        If preq15 > reservePlus Then preq15 = reservePlus
-        If preq15 < -reserveMinus Then preq15 = -reserveMinus
+        preq15 = PReqCalc(sPct, pNom, st.FNom, DynamicKdByTime(equipType, 15#), dfr15, st.MaxReqPct)
+        preq15 = ClampReserve(preq15, reservePlus, reserveMinus)
     End If
     thrMW = React15ThresholdMW(st, pNom, preq15)
     ClassifyReaction15 st, dp15, pNom, needSign, reservePlus, reserveMinus, thrMW, (dfr15 = 0), status, pass, note
@@ -731,9 +943,8 @@ Private Sub EvaluateDeficit(ByVal wsRaw As Worksheet, ByRef st As TSettings, _
         tSec = SecBetween(wsRaw.Cells(startRow, timeCol).Value, wsRaw.Cells(r, timeCol).Value)
         ' первые 15 с - переходный участок, оценивается отдельно по п. 4.2.11 (реакция РЧВ)
         If tSec < 15 Then GoTo NextR
-        preqT = -100# / sPct * pNom / st.FNom * DynamicKdByTime(equipType, tSec) * dFrT
-        If preqT > reservePlus Then preqT = reservePlus
-        If preqT < -reserveMinus Then preqT = -reserveMinus
+        preqT = PReqCalc(sPct, pNom, st.FNom, DynamicKdByTime(equipType, tSec), dFrT, st.MaxReqPct)
+        preqT = ClampReserve(preqT, reservePlus, reserveMinus)
         allowed = Abs(preqT) - tol
         If allowed <= 0 Then GoTo NextR
         have = SgnNZ(preqT) * (NzD(wsRaw.Cells(r, pCol).Value, 0) - p0)
@@ -758,39 +969,935 @@ End Sub
 ' Итоговый вывод по генератору (текст для Summary / листа графика)
 ' ----------------------------------------------------------
 Private Function BuildGeneratorVerdict(ByRef g As TGenCfg, ByRef res As TGenResult, ByRef st As TSettings) As String
-    Dim bad As String, remark As String, txt As String
+    Dim bad As String, remark As String, txt As String, okPart As String
     bad = ""
     remark = ""
 
-    If res.Limited Then
-        remark = remark & "Pтреб ограничен " & res.LimitType & " (оценка по располагаемому резерву); "
-    ElseIf Not res.QuantPass Then
-        bad = bad & "колич. критерий (" & Format(res.QuantPct, "0") & " % от Pтреб); "
+    ' Событие не подлежит оценке по МУ
+    If Not res.QuantApplicable And Not res.QualApplicable Then
+        txt = "НЕ ОЦЕНИВАЕТСЯ: " & res.Applicability
+        If Len(res.TelemetryNote) > 0 And Not res.TelemetryOK Then txt = txt & "; " & res.TelemetryNote
+        BuildGeneratorVerdict = txt
+        Exit Function
     End If
+
+    ' --- Количественная оценка (п. 4.2) ---
+    If res.QuantApplicable Then
+        If res.Limited Then
+            remark = remark & "Pтреб ограничен " & res.LimitType & " (п. 4.2.8: оценка по располагаемому резерву); "
+        ElseIf Not res.QuantPass Then
+            bad = bad & "Pфакт(tр) = " & Format(res.PFact, "0.00") & " МВт ниже Pтреб(tр) = " & Format(res.PReq, "0.00") & _
+                  " МВт (" & Format(res.QuantPct, "0") & " %) - п. 4.2.14.1 (с учётом допуска п. 4.2.7/4.2.8 и Kд(t) Приложения); "
+        End If
+        If res.DeficitSec > 0 And res.QuantPass And Not res.Limited Then
+            remark = remark & "кратковременный дефицит до " & Format(res.DeficitMaxPct, "0.0") & " %Pном в течение " & _
+                     Format(res.DeficitSec, "0") & " с (п. 4.2.14.1, в пределах допуска в tр); "
+        ElseIf res.DeficitSec > 0 Then
+            remark = remark & "дефицит до " & Format(res.DeficitMaxPct, "0.0") & " %Pном в течение " & _
+                     Format(res.DeficitSec, "0") & " с (п. 4.2.14.1); "
+        End If
+        If res.OscViolation Then
+            bad = bad & res.OscNote & " - п. 4.2.14.4; "
+        ElseIf Len(res.OscNote) > 0 And res.OscPeriods > 0 Then
+            remark = remark & res.OscNote & "; "
+        End If
+    Else
+        remark = remark & "количественная оценка не применяется (п. 4.1.2: " & res.Applicability & "); "
+    End If
+
+    ' --- Реакция РЧВ через 15 с (п. 4.2.11) ---
     If res.React15Status = "Нарушение" Then
-        bad = bad & "нет реакции РЧВ через 15 с (п. 4.2.11); "
+        bad = bad & "отсутствует реакция РЧВ турбины через 15 с (dP15 = " & Format(res.DP15, "0.00") & " МВт) - п. 4.2.11; "
     ElseIf res.React15Status = "Н/П" And Len(res.React15Note) > 0 And res.Dfr <> 0 Then
-        remark = remark & "реакция 15 с не оценивается - нет запаса по Pmax; "
+        remark = remark & "реакция 15 с не оценивается (" & res.React15Note & "); "
     End If
-    If res.DeficitSec > 0 Then
-        remark = remark & "дефицит до " & Format(res.DeficitMaxPct, "0.0") & " %Pном в течение " & _
-                 Format(res.DeficitSec, "0") & " с (п. 4.2.14.1); "
+
+    ' --- Качественная оценка (п. 4.4) ---
+    If res.QualApplicable Then
+        If Len(res.ReactionType) > 0 Then remark = remark & "тип реакции по п. 4.4.1: " & res.ReactionType & "; "
+        If Left$(res.QualClauseVerdict, 9) = "НАРУШЕНИЕ" Then
+            bad = bad & Mid$(res.QualClauseVerdict, 12) & "; "
+        ElseIf Len(res.QualClauseVerdict) > 0 Then
+            remark = remark & res.QualClauseVerdict & "; "
+        End If
+        If g.QualEnabled And res.Dfr <> 0 And Not res.QualPass Then
+            remark = remark & "ступени динамики (Прил. 1, табл. Е): не выполнены " & res.QualFailedList & "; "
+        End If
     End If
-    If g.QualEnabled And res.Dfr <> 0 And Not res.QualPass Then
-        remark = remark & "кач. подпункты: " & res.QualFailedList & "; "
+
+    If Len(res.TelemetryNote) > 0 And Not res.TelemetryOK Then remark = remark & res.TelemetryNote & "; "
+    If res.H15 > -900 Then
+        remark = remark & "h(15 с) = " & Format(res.H15, "0.00") & IIf(res.H15 < H15_REF, " < " & Format(H15_REF, "0.0") & " (ориентир)", "") & _
+                 " (идентификация переходной функции, Прил. п. 6.2, справочно); "
     End If
-    If res.TransientType = "Колебательный" Then
-        remark = remark & "колебательный процесс (" & res.NumExtrema & " экстремумов, п. 4.2.14.4); "
+    If g.ForcedNoRM Then
+        remark = remark & "оборудование без РМ, режим «Авария»: принято S = " & Format(g.SPct, "0.0") & " %, fнч = " & _
+                 Format(g.Fnch, "0.000") & " Гц (в Config: S = " & Format(g.SPctCfg, "0.0") & " %, fнч = " & Format(g.FnchCfg, "0.000") & " Гц); "
     End If
 
     If Len(bad) > 0 Then
         txt = "НАРУШЕНИЕ: " & bad
     Else
-        txt = "ОК: количественно и по реакции 15 с соответствует; "
+        okPart = "ОК: "
+        If res.QuantApplicable Then okPart = okPart & "количественно (п. 4.2.14.1) и "
+        okPart = okPart & "по реакции 15 с (п. 4.2.11) соответствует"
+        If res.QualApplicable And res.ReactionCode = 1 Then
+            okPart = okPart & "; качественно - реакция «адекватная» (п. 4.4.1)"
+        ElseIf res.QualApplicable And res.ReactionCode > 1 Then
+            okPart = okPart & "; качественно - тип реакции " & res.ReactionType & " (п. 4.4.1)"
+        End If
+        txt = okPart & "; "
     End If
     If Len(remark) > 0 Then txt = txt & "Замечания: " & remark
     If Right$(txt, 2) = "; " Then txt = Left$(txt, Len(txt) - 2)
     BuildGeneratorVerdict = txt
+End Function
+
+' ==========================================================
+' 1.7.0: режим «Авария/Испытание», события, применимость, tр, колебания,
+' телеизмерения, тип реакции, идентификация h(15 с), протокол
+' ==========================================================
+
+' Pтреб по формуле (2) МУ с ограничением |Pтреб| <= maxReqPct %Pном (Приложение: 0.1*Pном)
+Private Function PReqCalc(ByVal sPct As Double, ByVal pNom As Double, ByVal fNom As Double, _
+                          ByVal kd As Double, ByVal dfr As Double, ByVal maxReqPct As Double) As Double
+    Dim v As Double, capMW As Double
+    If dfr = 0 Or sPct <= 0 Or fNom <= 0 Then PReqCalc = 0: Exit Function
+    v = -100# / sPct * pNom / fNom * kd * dfr
+    If maxReqPct > 0 Then
+        capMW = maxReqPct / 100# * pNom
+        If v > capMW Then v = capMW
+        If v < -capMW Then v = -capMW
+    End If
+    PReqCalc = v
+End Function
+
+Private Function ClampReserve(ByVal v As Double, ByVal reservePlus As Double, ByVal reserveMinus As Double) As Double
+    If v > reservePlus Then v = reservePlus
+    If v < -reserveMinus Then v = -reserveMinus
+    ClampReserve = v
+End Function
+
+' Чтение строки Config с учётом режима: в «Аварии» для оборудования без РМ
+' принимаются S = 6 %, fнч = 0.15 Гц независимо от Config.
+Private Function ReadGenCfgEff(ByVal ws As Worksheet, ByVal r As Long, ByRef st As TSettings) As TGenCfg
+    Dim g As TGenCfg
+    g = ReadGenCfg(ws, r)
+    g.SPctCfg = g.SPct
+    g.FnchCfg = g.Fnch
+    g.ForcedNoRM = False
+    If st.IsEmergency And Not g.HasRM Then
+        g.SPct = NO_RM_S_PCT
+        g.Fnch = NO_RM_FNCH_HZ
+        g.ForcedNoRM = True
+    End If
+    ReadGenCfgEff = g
+End Function
+
+' Среднее значение частоты на отрезке ±halfSec вокруг строки row (Приложение, п. 4.2.6)
+' Границы окна ±halfSec вокруг строки row локальным сканированием (данные упорядочены по времени)
+Private Sub WindowRowsAround(ByVal wsRaw As Worksheet, ByVal timeCol As Long, ByVal row As Long, _
+                             ByVal halfSec As Double, ByRef r1 As Long, ByRef r2 As Long)
+    Dim lastR As Long, t0 As Double, tv As Variant
+    lastR = LastUsedRow(wsRaw)
+    r1 = row: r2 = row
+    If Not IsDate(wsRaw.Cells(row, timeCol).Value) Then Exit Sub
+    t0 = CDbl(CDate(wsRaw.Cells(row, timeCol).Value)) * 86400#
+    Do While r1 > 2
+        tv = wsRaw.Cells(r1 - 1, timeCol).Value
+        If Not IsDate(tv) Then Exit Do
+        If t0 - CDbl(CDate(tv)) * 86400# > halfSec + 0.0001 Then Exit Do
+        r1 = r1 - 1
+    Loop
+    Do While r2 < lastR
+        tv = wsRaw.Cells(r2 + 1, timeCol).Value
+        If Not IsDate(tv) Then Exit Do
+        If CDbl(CDate(tv)) * 86400# - t0 > halfSec + 0.0001 Then Exit Do
+        r2 = r2 + 1
+    Loop
+End Sub
+
+Private Function MeanFreqAround(ByVal wsRaw As Worksheet, ByVal fCol As Long, ByVal timeCol As Long, _
+                                ByVal row As Long, ByVal halfSec As Double, ByVal fNom As Double) As Double
+    Dim r1 As Long, r2 As Long, r As Long, s As Double, n As Long
+    WindowRowsAround wsRaw, timeCol, row, halfSec, r1, r2
+    For r = r1 To r2
+        If IsNumeric(wsRaw.Cells(r, fCol).Value) And Len(Trim$(CStr(wsRaw.Cells(r, fCol).Value))) > 0 Then
+            s = s + CDbl(wsRaw.Cells(r, fCol).Value)
+            n = n + 1
+        End If
+    Next r
+    If n > 0 Then MeanFreqAround = s / n Else MeanFreqAround = fNom
+End Function
+
+' Квазиустановившийся режим по частоте: на отрезке ±15 с |f - fср| <= 10 мГц (Приложение)
+Private Function IsQuasiSteady(ByVal wsRaw As Worksheet, ByVal fCol As Long, ByVal timeCol As Long, _
+                               ByVal row As Long, ByVal fNom As Double, ByRef fMean As Double) As Boolean
+    Dim r1 As Long, r2 As Long, r As Long, v As Variant
+    fMean = MeanFreqAround(wsRaw, fCol, timeCol, row, QS_HALF_WINDOW_SEC, fNom)
+    WindowRowsAround wsRaw, timeCol, row, QS_HALF_WINDOW_SEC, r1, r2
+    For r = r1 To r2
+        v = wsRaw.Cells(r, fCol).Value
+        If IsNumeric(v) And Len(Trim$(CStr(v))) > 0 Then
+            If Abs(CDbl(v) - fMean) > QS_TOL_HZ + 0.0000001 Then IsQuasiSteady = False: Exit Function
+        End If
+    Next r
+    IsQuasiSteady = True
+End Function
+
+' ----------------------------------------------------------
+' Поиск событий: интервалов выхода частоты за зону нечувствительности fнч.
+' Событие заканчивается, когда частота находится внутри fнч не менее
+' SteadyWindowSec подряд, либо по истечении MaxEventSec. Короткие выбросы
+' (< EVENT_MIN_OUTSIDE_SEC за fнч) не считаются событиями.
+' При отключённом автопоиске - одно событие от заданного времени старта.
+' Возвращает число событий (>= 1) и массив ev(1..n).
+' ----------------------------------------------------------
+Private Function FindEvents(ByVal wsRaw As Worksheet, ByVal timeCol As Long, ByVal fCol As Long, _
+                            ByRef st As TSettings, ByVal fnch As Double, ByRef ev() As TEvent) As Long
+    Dim lastR As Long, r As Long, n As Long
+    Dim prevOut As Boolean, curOut As Boolean, inEvent As Boolean
+    Dim lastOutRow As Long, tStart As Double, tCur As Double, tLastOut As Double
+    Dim outsideSec As Double, bestRow As Long, bestAbs As Double, val As Double
+    Dim dropped As Long
+
+    lastR = LastUsedRow(wsRaw)
+    ReDim ev(1 To 1)
+    n = 0
+
+    If lastR < 3 Then
+        ev(1).StartRow = 2: ev(1).FirstExceedRow = 2: ev(1).EndRow = lastR
+        FindEvents = 1
+        Exit Function
+    End If
+
+    If Not st.AutoStart And st.EventStart > 0 Then
+        bestRow = 2: bestAbs = 1E+99
+        For r = 2 To lastR
+            If IsDate(wsRaw.Cells(r, timeCol).Value) Then
+                val = Abs(CDbl(CDate(wsRaw.Cells(r, timeCol).Value)) - st.EventStart)
+                If val < bestAbs Then bestAbs = val: bestRow = r
+            End If
+        Next r
+        ev(1).StartRow = bestRow
+        ev(1).FirstExceedRow = bestRow
+        ev(1).EndRow = RowByTimeOffset(wsRaw, timeCol, bestRow, st.MaxEventSec)
+        FindEvents = 1
+        Exit Function
+    End If
+
+    prevOut = (Abs(NzD(wsRaw.Cells(2, fCol).Value, st.FNom) - st.FNom) > fnch)
+    inEvent = False
+    For r = 3 To lastR
+        curOut = (Abs(NzD(wsRaw.Cells(r, fCol).Value, st.FNom) - st.FNom) > fnch)
+        If IsDate(wsRaw.Cells(r, timeCol).Value) Then tCur = CDbl(CDate(wsRaw.Cells(r, timeCol).Value)) * 86400#
+        If Not inEvent Then
+            If curOut And Not prevOut Then
+                inEvent = True
+                n = n + 1
+                ReDim Preserve ev(1 To n)
+                ev(n).StartRow = r - 1
+                ev(n).FirstExceedRow = r
+                ev(n).EndRow = 0
+                lastOutRow = r
+                tStart = tCur
+                tLastOut = tCur
+                outsideSec = 0
+            End If
+        Else
+            If curOut Then
+                lastOutRow = r
+                tLastOut = tCur
+                outsideSec = outsideSec + 1
+            End If
+            ' конец события: частота внутри fнч дольше окна установившегося или достигнут предел окна
+            If (Not curOut And (tCur - tLastOut) >= st.SteadyWindowSec) Or (tCur - tStart) >= st.MaxEventSec Then
+                ev(n).EndRow = r
+                inEvent = False
+                ' фильтр коротких выбросов
+                If SecBetween(wsRaw.Cells(ev(n).FirstExceedRow, timeCol).Value, wsRaw.Cells(lastOutRow, timeCol).Value) + 1 < EVENT_MIN_OUTSIDE_SEC Then
+                    n = n - 1
+                    dropped = dropped + 1
+                    If n >= 1 Then ReDim Preserve ev(1 To n) Else ReDim ev(1 To 1)
+                End If
+            End If
+        End If
+        prevOut = curOut
+    Next r
+    If inEvent Then ev(n).EndRow = lastR
+
+    If n = 0 Then
+        ' Выхода за fнч не было: одно событие вокруг максимального отклонения (как в 1.6.x)
+        bestRow = 2: bestAbs = -1
+        For r = 2 To lastR
+            val = NzD(wsRaw.Cells(r, fCol).Value, st.FNom) - st.FNom
+            If Abs(val) > bestAbs Then bestAbs = Abs(val): bestRow = r
+        Next r
+        ReDim ev(1 To 1)
+        ev(1).StartRow = bestRow
+        ev(1).FirstExceedRow = bestRow
+        ev(1).EndRow = RowByTimeOffset(wsRaw, timeCol, bestRow, st.MaxEventSec)
+        n = 1
+    End If
+
+    If dropped > 0 Then AppendLog "INFO", "События", "Пропущено коротких выбросов частоты за fнч (< " & EVENT_MIN_OUTSIDE_SEC & " с): " & dropped
+    If st.MaxEvents >= 1 And n > st.MaxEvents Then
+        AppendLog "WARN", "События", "Найдено " & n & " событий; оцениваются первые " & st.MaxEvents & " (Config W15)"
+        ReDim Preserve ev(1 To st.MaxEvents)
+        n = st.MaxEvents
+    End If
+    FindEvents = n
+End Function
+
+' ----------------------------------------------------------
+' Применимость оценки по п. 4.1.2 / 4.1.3 / 4.4.3 / 4.4.4 МУ.
+' В режиме «Испытание» обе оценки считаются применимыми (контрольные испытания).
+' ----------------------------------------------------------
+Private Sub EvaluateApplicability(ByVal wsRaw As Worksheet, ByRef st As TSettings, ByRef g As TGenCfg, _
+                                  ByVal fCol As Long, ByVal timeCol As Long, _
+                                  ByVal startRow As Long, ByVal firstExceedRow As Long, ByVal evEnd As Long, _
+                                  ByRef res As TGenResult)
+    Dim r As Long, d As Double, dMax As Double, rMax As Long
+    Dim run02 As Double, best02 As Double, outSec As Double, dt As Double
+    Dim prevT As Double, curT As Double, minQuantSec As Double, isGpa As Boolean
+    Dim txtQ As String, txtK As String
+
+    dMax = 0: rMax = startRow
+    run02 = 0: best02 = 0: outSec = 0
+    prevT = -1
+    For r = startRow To evEnd
+        If IsDate(wsRaw.Cells(r, timeCol).Value) Then
+            curT = CDbl(CDate(wsRaw.Cells(r, timeCol).Value)) * 86400#
+            If prevT >= 0 Then dt = curT - prevT Else dt = 1
+            If dt <= 0 Or dt > 60 Then dt = 1
+            prevT = curT
+        Else
+            dt = 1
+        End If
+        d = NzD(wsRaw.Cells(r, fCol).Value, st.FNom) - st.FNom
+        If Abs(d) > Abs(dMax) Then dMax = d: rMax = r
+        If Abs(d) >= QUANT_DF_HZ - 0.0000001 Then
+            run02 = run02 + dt
+            If run02 > best02 Then best02 = run02
+        Else
+            run02 = 0
+        End If
+        If Abs(d) > g.Fnch Then outSec = outSec + dt
+    Next r
+
+    res.DfMaxEvent = dMax
+    res.DurAbove02Sec = best02
+    res.DurOutsideSec = outSec
+    If firstExceedRow > 0 And rMax >= firstExceedRow Then
+        res.JumpSec = SecBetween(wsRaw.Cells(firstExceedRow, timeCol).Value, wsRaw.Cells(rMax, timeCol).Value)
+    Else
+        res.JumpSec = 0
+    End If
+
+    If Not st.IsEmergency Then
+        res.QuantApplicable = True
+        res.QualApplicable = True
+        res.Applicability = "Испытание: колич. + кач. (применимость по п. 4.1.2/4.1.3 не проверяется)"
+        Exit Sub
+    End If
+
+    isGpa = (InStr(UCase$(g.EquipType), "ГПА") > 0 Or InStr(UCase$(g.EquipType), "ДГУ") > 0)
+    minQuantSec = IIf(isGpa, QUANT_MIN_SEC_GPA, QUANT_MIN_SEC_TES)
+
+    ' п. 4.1.2: |dF| >= 0.2 Гц не менее 30 с (ТЭС) / 1 мин (ГПА, ДГУ)
+    res.QuantApplicable = (best02 >= minQuantSec - 0.5)
+    If res.QuantApplicable Then
+        txtQ = "колич. (п. 4.1.2: |dF| >= 0.2 Гц в течение " & Format(best02, "0") & " с)"
+    ElseIf best02 > 0 Then
+        txtQ = "|dF| >= 0.2 Гц лишь " & Format(best02, "0") & " с (< " & Format(minQuantSec, "0") & " с по п. 4.1.2)"
+    Else
+        txtQ = "|dF|max = " & Format(Abs(dMax), "0.000") & " Гц < 0.2 Гц (п. 4.1.2)"
+    End If
+
+    ' п. 4.1.3: резкое (<= 10 с) отклонение продолжительностью >= 20 с;
+    ' п. 4.4.4 (с РМ): выход за 50±0.15 Гц; п. 4.4.3 (без РМ): скачок ±0.2..0.4 Гц.
+    Dim jumpOk As Boolean, durOk As Boolean, levelOk As Boolean
+    jumpOk = (res.JumpSec <= QUAL_JUMP_SEC + 0.5) Or res.QuantApplicable
+    durOk = (outSec >= QUAL_MIN_SEC - 0.5)
+    If g.HasRM Then
+        levelOk = (Abs(dMax) > QUAL_RM_DF_HZ)
+    Else
+        levelOk = (Abs(dMax) >= QUANT_DF_HZ - 0.0000001 And Abs(dMax) <= QUAL_NORM_DF_MAX_HZ + 0.0000001)
+    End If
+    res.QualApplicable = jumpOk And durOk And levelOk
+    If res.QualApplicable Then
+        txtK = "кач. (п. 4.1.3, " & IIf(g.HasRM, "п. 4.4.4: с РМ, |dF| > 0.15 Гц", "п. 4.4.3: без РМ, |dF| в 0.2..0.4 Гц") & _
+               "; нарастание " & Format(res.JumpSec, "0") & " с, вне fнч " & Format(outSec, "0") & " с)"
+    Else
+        txtK = "кач. не применяется ("
+        If Not jumpOk Then txtK = txtK & "нарастание " & Format(res.JumpSec, "0") & " с > 10 с; "
+        If Not durOk Then txtK = txtK & "вне fнч лишь " & Format(outSec, "0") & " с < 20 с; "
+        If Not levelOk Then txtK = txtK & "|dF|max = " & Format(Abs(dMax), "0.000") & " Гц вне диапазона " & _
+            IIf(g.HasRM, "> 0.15 Гц (п. 4.4.4)", "0.2..0.4 Гц (п. 4.4.3)") & "; "
+        If Right$(txtK, 2) = "; " Then txtK = Left$(txtK, Len(txtK) - 2)
+        txtK = txtK & ")"
+    End If
+
+    If res.QuantApplicable And res.QualApplicable Then
+        res.Applicability = "Колич. + кач.: " & txtQ & "; " & txtK
+    ElseIf res.QuantApplicable Then
+        res.Applicability = "Только колич.: " & txtQ & "; " & txtK
+    ElseIf res.QualApplicable Then
+        res.Applicability = "Только кач.: " & txtQ & "; " & txtK
+    Else
+        res.Applicability = "отклонение частоты не удовлетворяет п. 4.1.2/4.1.3 МУ: " & txtQ & "; " & txtK
+    End If
+End Sub
+
+' ----------------------------------------------------------
+' Выбор момента оценки tр (п. 4.2.5, 4.2.9, Приложение):
+' среди квазиустановившихся по частоте точек окна события (t >= 15 с от t0,
+' |fср - fном| > fнч) выбирается точка с максимальным дефицитом первичной
+' мощности относительно границы Pтреб(t) - 1 %Pном. Если дефицита нет -
+' точка с максимальным |dFр|. Если квазиустановившихся точек нет - конец
+' контрольного интервала (Config W5), как в 1.6.x.
+' ----------------------------------------------------------
+Private Sub SelectEvaluationPoint(ByVal wsRaw As Worksheet, ByRef st As TSettings, ByRef g As TGenCfg, _
+                                  ByVal pCol As Long, ByVal fCol As Long, ByVal timeCol As Long, _
+                                  ByVal startRow As Long, ByVal firstExceedRow As Long, ByVal evEnd As Long, _
+                                  ByVal endRef As Long, ByVal p0 As Double, _
+                                  ByVal reservePlus As Double, ByVal reserveMinus As Double, ByRef res As TGenResult)
+    Dim r As Long, fMean As Double, dfrT As Double, tSec As Double, preqT As Double
+    Dim have As Double, deficit As Double, tol As Double
+    Dim bestRow As Long, bestDef As Double, bestDfrRow As Long, bestDfr As Double
+    Dim anyQS As Boolean, stepR As Long, lastR As Long
+
+    tol = 0.01 * g.PNom
+    bestRow = 0: bestDef = -1E+99
+    bestDfrRow = 0: bestDfr = 0
+    anyQS = False
+    lastR = LastUsedRow(wsRaw)
+    If evEnd > lastR Then evEnd = lastR
+
+    ' шаг перебора - по строкам; для длинных событий ограничиваем число проверок ~600
+    stepR = 1
+    If evEnd - startRow > 600 Then stepR = (evEnd - startRow) \ 600 + 1
+
+    For r = startRow To evEnd Step stepR
+        tSec = SecBetween(wsRaw.Cells(startRow, timeCol).Value, wsRaw.Cells(r, timeCol).Value)
+        If tSec < 15 Then GoTo NextR
+        If Not IsQuasiSteady(wsRaw, fCol, timeCol, r, st.FNom, fMean) Then GoTo NextR
+        dfrT = DeadbandDeviation(fMean - st.FNom, g.Fnch)
+        If dfrT = 0 Then GoTo NextR
+        anyQS = True
+        preqT = ClampReserve(PReqCalc(g.SPct, g.PNom, st.FNom, DynamicKdByTime(g.EquipType, tSec), dfrT, st.MaxReqPct), reservePlus, reserveMinus)
+        have = SgnNZ(preqT) * (AvgPowerBackward(wsRaw, pCol, timeCol, r, st.AvgWindowSec) - p0)
+        deficit = (Abs(preqT) - tol) - have
+        If deficit > bestDef Then bestDef = deficit: bestRow = r
+        If Abs(dfrT) > Abs(bestDfr) Then bestDfr = dfrT: bestDfrRow = r
+NextR:
+    Next r
+
+    If anyQS Then
+        If bestDef > 0 Then
+            res.TrRow = bestRow
+        Else
+            ' дефицита нигде нет (п. 4.2.5: момент может выбираться любым) - берём макс. |dFр|
+            res.TrRow = IIf(bestDfrRow > 0, bestDfrRow, bestRow)
+        End If
+        res.TrQuasiSteady = True
+    Else
+        res.TrRow = endRef
+        res.TrQuasiSteady = False
+    End If
+    If res.TrRow < startRow Then res.TrRow = startRow
+    res.TrTime = wsRaw.Cells(res.TrRow, timeCol).Value
+    res.TrSec = SecBetween(wsRaw.Cells(startRow, timeCol).Value, wsRaw.Cells(res.TrRow, timeCol).Value)
+End Sub
+
+' ----------------------------------------------------------
+' п. 4.2.6 / 4.2.14.4: незатухающие (слабозатухающие) колебания мощности -
+' более 5 подряд периодов с амплитудой > 1 %Pном, не связанные с колебаниями
+' частоты. Экстремумы ищутся по сглаженному (5 точек) ряду dP; колебание
+' считается связанным с частотой, если у большинства экстремумов мощности
+' в пределах ±3 с есть экстремум частоты с размахом > 10 мГц.
+' ----------------------------------------------------------
+Private Sub EvaluateOscillations(ByVal wsRaw As Worksheet, ByRef st As TSettings, ByRef g As TGenCfg, ByRef res As TGenResult, _
+                                 ByVal pCol As Long, ByVal fCol As Long, ByVal timeCol As Long, _
+                                 ByVal startRow As Long, ByVal evEnd As Long)
+    Dim n As Long, i As Long, r As Long
+    Dim p() As Double, f() As Double, ps() As Double
+    Dim extrIdx() As Long, extrCnt As Long
+    Dim prevDir As Integer, curDir As Integer, dP As Double, noise As Double
+    Dim amp As Double, maxAmp As Double, cntBig As Long, bestRun As Long, run As Long
+    Dim fTied As Long, j As Long, fLo As Double, fHi As Double, k As Long
+    Dim s As Double, c As Long
+
+    res.OscViolation = False
+    res.OscPeriods = 0
+    res.OscAmplPct = 0
+    res.OscNote = ""
+    n = evEnd - startRow + 1
+    If n < 20 Or g.PNom <= 0 Then Exit Sub
+    If n > 5000 Then n = 5000
+
+    ReDim p(1 To n): ReDim f(1 To n): ReDim ps(1 To n)
+    For i = 1 To n
+        r = startRow + i - 1
+        p(i) = NzD(wsRaw.Cells(r, pCol).Value, 0)
+        f(i) = NzD(wsRaw.Cells(r, fCol).Value, st.FNom)
+    Next i
+    ' сглаживание 5 точек
+    For i = 1 To n
+        s = 0: c = 0
+        For j = i - 2 To i + 2
+            If j >= 1 And j <= n Then s = s + p(j): c = c + 1
+        Next j
+        ps(i) = s / c
+    Next i
+
+    noise = 0.002 * g.PNom   ' 0.2 %Pном - порог значимого изменения
+    ReDim extrIdx(1 To n)
+    extrCnt = 0
+    prevDir = 0
+    For i = 2 To n
+        dP = ps(i) - ps(i - 1)
+        If dP > noise Then
+            curDir = 1
+        ElseIf dP < -noise Then
+            curDir = -1
+        Else
+            curDir = 0
+        End If
+        If prevDir <> 0 And curDir <> 0 And curDir <> prevDir Then
+            extrCnt = extrCnt + 1
+            extrIdx(extrCnt) = i - 1
+        End If
+        If curDir <> 0 Then prevDir = curDir
+    Next i
+    If extrCnt < 2 Then Exit Sub
+
+    ' амплитуда полупериодов (|разность соседних экстремумов| / 2); подряд идущие "большие" полуволны
+    maxAmp = 0: cntBig = 0: bestRun = 0: run = 0
+    For i = 2 To extrCnt
+        amp = Abs(ps(extrIdx(i)) - ps(extrIdx(i - 1))) / 2#
+        If amp > maxAmp Then maxAmp = amp
+        If amp > OSC_MIN_AMPL_PCT / 100# * g.PNom Then
+            run = run + 1
+            If run > bestRun Then bestRun = run
+            cntBig = cntBig + 1
+        Else
+            run = 0
+        End If
+    Next i
+    res.OscAmplPct = 100# * maxAmp / g.PNom
+    res.OscPeriods = bestRun \ 2    ' два полупериода = один период
+
+    ' связь с частотой: вблизи экстремума мощности (±3 с) есть размах частоты > 10 мГц
+    fTied = 0
+    For i = 1 To extrCnt
+        fLo = 1E+99: fHi = -1E+99
+        r = startRow + extrIdx(i) - 1
+        k = extrIdx(i)
+        Do While k >= 1
+            If Abs(SecBetween(wsRaw.Cells(r, timeCol).Value, wsRaw.Cells(startRow + k - 1, timeCol).Value)) > 3.0001 Then Exit Do
+            If f(k) < fLo Then fLo = f(k)
+            If f(k) > fHi Then fHi = f(k)
+            k = k - 1
+        Loop
+        k = extrIdx(i) + 1
+        Do While k <= n
+            If Abs(SecBetween(wsRaw.Cells(r, timeCol).Value, wsRaw.Cells(startRow + k - 1, timeCol).Value)) > 3.0001 Then Exit Do
+            If f(k) < fLo Then fLo = f(k)
+            If f(k) > fHi Then fHi = f(k)
+            k = k + 1
+        Loop
+        If fHi - fLo > QS_TOL_HZ Then fTied = fTied + 1
+    Next i
+
+    If res.OscPeriods >= OSC_MIN_PERIODS And res.OscAmplPct > OSC_MIN_AMPL_PCT Then
+        If fTied * 2 > extrCnt Then
+            res.OscNote = "колебания мощности (" & res.OscPeriods & " периодов, амплитуда до " & Format(res.OscAmplPct, "0.0") & _
+                          " %Pном) связаны с колебаниями частоты - не нарушение по п. 4.2.14.4"
+        Else
+            res.OscViolation = True
+            res.OscNote = "незатухающие колебания мощности: " & res.OscPeriods & " периодов подряд с амплитудой до " & _
+                          Format(res.OscAmplPct, "0.0") & " %Pном (> 1 %Pном), не связанные с частотой"
+        End If
+    ElseIf res.OscPeriods > 0 And res.OscAmplPct > OSC_MIN_AMPL_PCT Then
+        res.OscNote = "колебания мощности " & res.OscPeriods & " пер., амплитуда до " & Format(res.OscAmplPct, "0.0") & " %Pном (п. 4.2.6, < 5 периодов)"
+    End If
+End Sub
+
+' ----------------------------------------------------------
+' Качество телеизмерений мощности в окне события: пропуски, "замороженные"
+' значения (более 11 одинаковых подряд - по аналогии с п. 6.1.8.3 Приложения 1),
+' одиночные скачки > 20 %Pном за один шаг.
+' ----------------------------------------------------------
+Private Sub EvaluateTelemetry(ByVal wsRaw As Worksheet, ByRef g As TGenCfg, ByRef res As TGenResult, _
+                              ByVal pCol As Long, ByVal timeCol As Long, ByVal startRow As Long, ByVal evEnd As Long)
+    Dim r As Long, r1 As Long, total As Long, blanks As Long, run As Long, maxRun As Long
+    Dim prevV As Double, curV As Double, hasPrev As Boolean, spikes As Long, note As String
+    Dim lastR As Long
+    res.TelemetryOK = True
+    res.TelemetryNote = ""
+    lastR = LastUsedRow(wsRaw)
+    r1 = RowByTimeOffset(wsRaw, timeCol, startRow, -15#)
+    If r1 < 2 Then r1 = 2
+    If evEnd > lastR Then evEnd = lastR
+    hasPrev = False
+    For r = r1 To evEnd
+        total = total + 1
+        If Not IsNumeric(wsRaw.Cells(r, pCol).Value) Or Len(Trim$(CStr(wsRaw.Cells(r, pCol).Value))) = 0 Then
+            blanks = blanks + 1
+            run = 0
+            hasPrev = False
+        Else
+            curV = CDbl(wsRaw.Cells(r, pCol).Value)
+            If hasPrev Then
+                If Abs(curV - prevV) < 0.0000001 Then
+                    run = run + 1
+                    If run > maxRun Then maxRun = run
+                Else
+                    run = 0
+                End If
+                If g.PNom > 0 Then
+                    If Abs(curV - prevV) > 0.2 * g.PNom Then spikes = spikes + 1
+                End If
+            End If
+            prevV = curV
+            hasPrev = True
+        End If
+    Next r
+    If total = 0 Then Exit Sub
+    note = ""
+    If blanks > 0 Then
+        note = note & "пропуски ТИ мощности: " & blanks & " из " & total & " точек; "
+        If blanks * 10 > total Then res.TelemetryOK = False
+    End If
+    If maxRun + 1 > TELEM_MAX_REPEAT Then
+        note = note & "одинаковые значения мощности " & (maxRun + 1) & " точек подряд (> " & TELEM_MAX_REPEAT & ", возможное «замораживание» ТИ); "
+        res.TelemetryOK = False
+    End If
+    If spikes > 0 Then
+        note = note & "скачки мощности > 20 %Pном за шаг: " & spikes & "; "
+        If spikes > 2 Then res.TelemetryOK = False
+    End If
+    If Len(note) > 0 Then
+        If Right$(note, 2) = "; " Then note = Left$(note, Len(note) - 2)
+        res.TelemetryNote = IIf(res.TelemetryOK, "ТИ: ", "ТИ сомнительны: ") & note
+    End If
+End Sub
+
+' ----------------------------------------------------------
+' Тип реакции по п. 4.4.1 МУ (1 «адекватная» ... 8 «телеизмерение») и вывод по
+' п. 4.4.3 (без РМ: фиксируется факт отсутствия «адекватной» реакции; нарушение -
+' при трёх и более фактах за год) / п. 4.4.4 (с РМ: нарушение при отсутствии
+' «адекватной» реакции при наличии резерва).
+' ----------------------------------------------------------
+Private Sub ClassifyReactionType(ByVal wsRaw As Worksheet, ByRef st As TSettings, ByRef g As TGenCfg, ByRef res As TGenResult, _
+                                 ByVal pCol As Long, ByVal fCol As Long, ByVal timeCol As Long, _
+                                 ByVal startRow As Long, ByVal evEnd As Long)
+    Dim needSign As Integer, reserveNeed As Double, thr1 As Double
+    Dim r As Long, dP As Double, maxGood As Double, maxBad As Double, rMaxGood As Long
+    Dim dPTr As Double, code As Long, tName As String
+    Dim lastR As Long
+
+    res.ReactionCode = 0
+    res.ReactionType = ""
+    res.QualClauseVerdict = ""
+    needSign = SgnNZ(res.PReqOrig)
+    If needSign = 0 Then needSign = -SgnNZ(res.DfMaxEvent)
+    If needSign = 0 Then Exit Sub
+
+    thr1 = 0.01 * g.PNom
+    reserveNeed = IIf(needSign = 1, res.ReservePlus, res.ReserveMinus)
+    lastR = LastUsedRow(wsRaw)
+    If evEnd > lastR Then evEnd = lastR
+
+    maxGood = 0: maxBad = 0: rMaxGood = startRow
+    For r = startRow To evEnd
+        dP = needSign * (NzD(wsRaw.Cells(r, pCol).Value, 0) - res.P0)
+        If dP > maxGood Then maxGood = dP: rMaxGood = r
+        If -dP > maxBad Then maxBad = -dP
+    Next r
+    dPTr = needSign * res.PFact
+
+    If Not res.TelemetryOK And maxGood < thr1 And maxBad < thr1 Then
+        code = 8: tName = "телеизмерение"
+    ElseIf reserveNeed < thr1 Then
+        code = 7: tName = "без резерва"
+    ElseIf res.OscViolation Then
+        code = 5: tName = "колебания"
+    ElseIf maxBad > thr1 And maxGood < thr1 Then
+        code = 4: tName = "противоположная"
+    ElseIf maxGood < thr1 Then
+        code = 6: tName = "нет реакции"
+    ElseIf res.React15Status = "ОК" And dPTr < 0.5 * maxGood And dPTr < Abs(res.PReq) - thr1 And res.Dfr <> 0 Then
+        code = 2: tName = "с провалом"
+    ElseIf res.React15Status = "Нарушение" And dPTr >= 0.5 * Abs(res.PReqStatic) Then
+        code = 3: tName = "котельная"
+    ElseIf res.React15Status = "Нарушение" And maxGood >= thr1 Then
+        code = 3: tName = "котельная"
+    Else
+        code = 1: tName = "адекватная"
+    End If
+    res.ReactionCode = code
+    res.ReactionType = code & " - «" & tName & "»"
+
+    If Not res.QualApplicable Then Exit Sub
+    If code = 1 Then
+        res.QualClauseVerdict = "реакция «адекватная» - требования п. " & IIf(g.HasRM, "4.4.4", "4.4.3") & " выполнены"
+    ElseIf code = 7 Then
+        res.QualClauseVerdict = "резерв на изменение мощности отсутствует - отсутствие реакции не является нарушением (п. " & IIf(g.HasRM, "4.4.4", "4.4.3") & ")"
+    ElseIf code = 8 Then
+        res.QualClauseVerdict = "качественная оценка невозможна из-за качества ТИ (тип 8 по п. 4.4.1)"
+    ElseIf g.HasRM Then
+        res.QualClauseVerdict = "НАРУШЕНИЕ: отсутствие реакции типа «адекватная» (тип " & res.ReactionType & ") при наличии резерва " & _
+                                Format(reserveNeed, "0.0") & " МВт - п. 4.4.4"
+    Else
+        res.QualClauseVerdict = "зафиксирован факт отсутствия реакции типа «адекватная» (тип " & res.ReactionType & ") при резерве " & _
+                                Format(reserveNeed, "0.0") & " МВт - п. 4.4.3 (нарушение фиксируется при >= 3 фактах за календарный год)"
+    End If
+End Sub
+
+' ----------------------------------------------------------
+' Приложение к МУ, п. 6.2: идентификация переходной функции генерирующего
+' оборудования по отрезку [t-15; t+30] с (46 точек с шагом 1 с) относительно
+' момента выхода частоты за fнч. x = Pтреб(Kд=1)/Pном*100 [%], y = dP/Pном*100 [%],
+' сглаживание скользящим средним по 5 точкам, приращения dx/dy, СЛАУ 15x15
+' (нормальные уравнения) -> приращения dh(1..15), h(15) = сумма dh.
+' Возвращает h(15 с) или -999, если вычислить невозможно. Результат справочный.
+' ----------------------------------------------------------
+Private Function IdentifyH15(ByVal wsRaw As Worksheet, ByRef st As TSettings, ByRef g As TGenCfg, _
+                             ByVal pCol As Long, ByVal fCol As Long, ByVal timeCol As Long, _
+                             ByVal centerRow As Long, ByVal p0 As Double, ByRef note As String) As Double
+    Const NPTS As Long = 50      ' t-17 .. t+32 (46 точек + по 2 для сглаживания)
+    Const NH As Long = 15
+    Dim x() As Double, y() As Double, xs() As Double, ys() As Double, dx() As Double, dy() As Double
+    Dim a() As Double, b() As Double, dh() As Double
+    Dim i As Long, j As Long, k As Long, r As Long, lastR As Long
+    Dim dfr As Double, s As Double, c As Long, sumAbsDx As Double, h As Double, tr As Double
+    ReDim x(1 To NPTS): ReDim y(1 To NPTS): ReDim xs(1 To NPTS): ReDim ys(1 To NPTS)
+    ReDim dx(1 To NPTS): ReDim dy(1 To NPTS)
+    ReDim a(1 To NH, 1 To NH): ReDim b(1 To NH): ReDim dh(1 To NH)
+
+    IdentifyH15 = -999
+    note = ""
+    If centerRow <= 0 Or g.PNom <= 0 Or g.SPct <= 0 Then note = "h(15 с): нет момента выхода за fнч": Exit Function
+    lastR = LastUsedRow(wsRaw)
+    If RowByTimeOffset(wsRaw, timeCol, centerRow, 32#) >= lastR Then note = "h(15 с): недостаточно данных после выхода за fнч": Exit Function
+
+    For i = 1 To NPTS
+        r = RowByTimeOffset(wsRaw, timeCol, centerRow, CDbl(i - 18))   ' i=18 -> t
+        If r < 2 Then r = 2
+        dfr = DeadbandDeviation(NzD(wsRaw.Cells(r, fCol).Value, st.FNom) - st.FNom, g.Fnch)
+        x(i) = PReqCalc(g.SPct, g.PNom, st.FNom, 1#, dfr, st.MaxReqPct) / g.PNom * 100#
+        y(i) = (NzD(wsRaw.Cells(r, pCol).Value, p0) - p0) / g.PNom * 100#
+    Next i
+    ' скользящее среднее по 5 точкам
+    For i = 1 To NPTS
+        s = 0: c = 0
+        For j = i - 2 To i + 2
+            If j >= 1 And j <= NPTS Then s = s + x(j): c = c + 1
+        Next j
+        xs(i) = s / c
+        s = 0: c = 0
+        For j = i - 2 To i + 2
+            If j >= 1 And j <= NPTS Then s = s + y(j): c = c + 1
+        Next j
+        ys(i) = s / c
+    Next i
+    ' приращения на рабочем отрезке i = 3..48 (46 точек)
+    dx(3) = 0: dy(3) = 0
+    sumAbsDx = 0
+    For i = 4 To 48
+        dx(i) = xs(i) - xs(i - 1)
+        dy(i) = ys(i) - ys(i - 1)
+        sumAbsDx = sumAbsDx + Abs(dx(i))
+    Next i
+    If sumAbsDx < 0.05 Then note = "h(15 с): входное воздействие (Pтреб) практически не менялось - идентификация не выполнена": Exit Function
+
+    ' нормальные уравнения: A(i,j) = sum_k dx(k-i)*dx(k-j), b(i) = sum_k dx(k-i)*dy(k)
+    For i = 1 To NH
+        b(i) = 0
+        For j = 1 To NH
+            a(i, j) = 0
+        Next j
+    Next i
+    For k = 3 + NH To 48
+        For i = 1 To NH
+            b(i) = b(i) + dx(k - i) * dy(k)
+            For j = 1 To NH
+                a(i, j) = a(i, j) + dx(k - i) * dx(k - j)
+            Next j
+        Next i
+    Next k
+    ' регуляризация (малая добавка к диагонали) для устойчивости при ступенчатом входе
+    tr = 0
+    For i = 1 To NH
+        tr = tr + a(i, i)
+    Next i
+    For i = 1 To NH
+        a(i, i) = a(i, i) + 0.000001 * (tr / NH + 0.000001)
+    Next i
+    If Not SolveLinearSystem(a, b, dh, NH) Then note = "h(15 с): СЛАУ вырождена": Exit Function
+    h = 0
+    For i = 1 To NH
+        h = h + dh(i)
+    Next i
+    IdentifyH15 = h
+    note = "h(15 с) = " & Format(h, "0.00") & " (Прил. п. 6.2, справочно; ориентир " & Format(H15_REF, "0.0") & ")"
+End Function
+
+' Решение СЛАУ методом Гаусса с выбором главного элемента. a/b модифицируются.
+Private Function SolveLinearSystem(ByRef a() As Double, ByRef b() As Double, ByRef x() As Double, ByVal n As Long) As Boolean
+    Dim i As Long, j As Long, k As Long, piv As Long, tmp As Double, factor As Double
+    For k = 1 To n
+        piv = k
+        For i = k + 1 To n
+            If Abs(a(i, k)) > Abs(a(piv, k)) Then piv = i
+        Next i
+        If Abs(a(piv, k)) < 1E-14 Then SolveLinearSystem = False: Exit Function
+        If piv <> k Then
+            For j = 1 To n
+                tmp = a(k, j): a(k, j) = a(piv, j): a(piv, j) = tmp
+            Next j
+            tmp = b(k): b(k) = b(piv): b(piv) = tmp
+        End If
+        For i = k + 1 To n
+            factor = a(i, k) / a(k, k)
+            For j = k To n
+                a(i, j) = a(i, j) - factor * a(k, j)
+            Next j
+            b(i) = b(i) - factor * b(k)
+        Next i
+    Next k
+    For i = n To 1 Step -1
+        tmp = b(i)
+        For j = i + 1 To n
+            tmp = tmp - a(i, j) * x(j)
+        Next j
+        x(i) = tmp / a(i, i)
+    Next i
+    SolveLinearSystem = True
+End Function
+
+' ----------------------------------------------------------
+' Протокол (текстовый отчёт)
+' ----------------------------------------------------------
+Private Sub AddProtocolLine(ByVal s As String)
+    If m_Protocol Is Nothing Then Set m_Protocol = New Collection
+    m_Protocol.Add s
+End Sub
+
+Private Sub AddProtocolGenerator(ByRef g As TGenCfg, ByRef res As TGenResult)
+    Dim hdr As String
+    hdr = g.Station & " / " & g.Generator & " (" & g.EquipType & ", Pном " & Format(g.PNom, "0.0") & " МВт, S " & Format(g.SPct, "0.0") & _
+          " %, fнч " & Format(g.Fnch, "0.000") & " Гц, " & IIf(g.HasRM, "с РМ", "без РМ") & ", " & g.Layout & ")"
+    If res.EventIdx > 1 Then hdr = hdr & " - событие " & res.EventIdx
+    AddProtocolLine hdr
+    AddProtocolLine "  Старт t0: " & Format(res.StartTime, "dd.mm.yyyy hh:mm:ss") & "; выход за fнч: " & _
+        IIf(IsDate(res.FirstExceedTime), Format(res.FirstExceedTime, "hh:mm:ss"), "-") & "; tр: " & _
+        IIf(IsDate(res.TrTime), Format(res.TrTime, "hh:mm:ss"), "-") & " (" & Format(res.TrSec, "0") & " с, " & _
+        IIf(res.TrQuasiSteady, "квазиустановившийся режим", "переходный режим") & ")"
+    AddProtocolLine "  Применимость: " & res.Applicability
+    AddProtocolLine "  dF(tр) = " & Format(res.Dfr + IIf(res.Dfr > 0, g.Fnch, IIf(res.Dfr < 0, -g.Fnch, 0)), "0.000") & " Гц; dFр = " & Format(res.Dfr, "0.000") & _
+        " Гц; Kд(tр) = " & Format(res.KdUsedQuant, "0.00") & "; P0 = " & Format(res.P0, "0.000") & " МВт; Pтек(tр) = " & Format(res.PTek, "0.000") & _
+        " МВт; Pтреб = " & Format(res.PReq, "0.000") & " МВт" & IIf(res.Limited, " (ограничен " & res.LimitType & ")", "") & _
+        "; Pфакт = " & Format(res.PFact, "0.000") & " МВт; выполнение " & Format(res.QuantPct, "0") & " %"
+    AddProtocolLine "  Реакция РЧВ 15 с (п. 4.2.11): " & res.React15Status & " (dP15 = " & Format(res.DP15, "0.000") & " МВт)" & _
+        "; дефицит (п. 4.2.14.1): " & IIf(res.DeficitSec > 0, "до " & Format(res.DeficitMaxPct, "0.0") & " %Pном, " & Format(res.DeficitSec, "0") & " с", "нет") & _
+        "; тип реакции (п. 4.4.1): " & IIf(Len(res.ReactionType) > 0, res.ReactionType, "-")
+    AddProtocolLine "  ВЫВОД: " & res.Verdict
+    AddProtocolLine ""
+End Sub
+
+Private Sub AddProtocolStation(ByRef sr As TStationResult)
+    AddProtocolLine sr.Station & IIf(Len(sr.Paroprovod) > 0, " / паропровод " & sr.Paroprovod, "") & " - СУММА (" & sr.Count & " ген., " & _
+        IIf(sr.IsNeblok, "неблочная часть, п. 4.2.10", "блочная компоновка - справочно") & ")" & IIf(sr.EventIdx > 1, " - событие " & sr.EventIdx, "")
+    AddProtocolLine "  Старт t0: " & Format(sr.StartTime, "dd.mm.yyyy hh:mm:ss") & "; tр: " & IIf(IsDate(sr.TrTime), Format(sr.TrTime, "hh:mm:ss"), "-") & _
+        " (" & Format(sr.TrSec, "0") & " с); P0 = " & Format(sr.P0, "0.000") & " МВт; Pтреб_сум = " & Format(sr.PReq, "0.000") & _
+        " МВт; Pфакт_сум = " & Format(sr.PFact, "0.000") & " МВт; выполнение " & Format(sr.QuantPct, "0") & " %"
+    AddProtocolLine "  Применимость: " & sr.Applicability
+    AddProtocolLine "  Реакция РЧВ 15 с: " & sr.React15Status & " (dP15 = " & Format(sr.DP15, "0.000") & " МВт); дефицит: " & _
+        IIf(sr.DeficitSec > 0, "до " & Format(sr.DeficitMaxPct, "0.0") & " %Pном_сум, " & Format(sr.DeficitSec, "0") & " с", "нет")
+    AddProtocolLine "  ВЫВОД: " & sr.Verdict
+    AddProtocolLine ""
+End Sub
+
+Private Sub WriteProtocolSheet(ByRef st As TSettings, ByVal wsRaw As Worksheet)
+    Dim ws As Worksheet, r As Long, i As Long, lastR As Long
+    Dim tFirst As Variant, tLast As Variant
+    Set ws = EnsureSheet(SH_PROT)
+    ws.Cells.Clear
+    lastR = LastUsedRow(wsRaw)
+    tFirst = wsRaw.Cells(2, 1).Value
+    tLast = wsRaw.Cells(lastR, 1).Value
+    ws.Range("A1").Value = "ПРОТОКОЛ оценки участия генерирующего оборудования в ОПРЧ"
+    ws.Range("A1").Font.Bold = True
+    ws.Range("A1").Font.Size = 14
+    ws.Range("A2").Value = "Методика: Методические указания по оценке участия генерирующего оборудования в ОПРЧ (Приложение 14 к Техтребованиям); " & _
+                           "ступени динамики - Приложение 1 (МУ проверки готовности)."
+    ws.Range("A3").Value = "Программа: OPRCH_Monitor v" & OPRCH_VERSION & "; режим: " & st.Mode & "; дата расчёта: " & Format(Now, "dd.mm.yyyy hh:mm")
+    ws.Range("A4").Value = "Выборка RawData: " & IIf(IsDate(tFirst), Format(tFirst, "dd.mm.yyyy hh:mm:ss"), "-") & " - " & _
+                           IIf(IsDate(tLast), Format(tLast, "dd.mm.yyyy hh:mm:ss"), "-") & " (" & (lastR - 1) & " строк); fном = " & st.FNom & " Гц; " & _
+                           "контрольный интервал " & st.QuantIntervalSec & " с; допуск колич. " & st.QuantTolPct & " %; ограничение Pтреб " & st.MaxReqPct & " %Pном"
+    ws.Range("A5").Value = IIf(st.IsEmergency, _
+        "Режим «Авария»: для оборудования без РМ приняты S = " & NO_RM_S_PCT & " %, fнч = " & NO_RM_FNCH_HZ & " Гц; применимость оценок - по п. 4.1.2/4.1.3 МУ.", _
+        "Режим «Испытание»: использованы фактические S/fнч из Config; применимость по п. 4.1.2/4.1.3 не проверялась.")
+    ws.Range("A6").Value = "Нарушения формулируются со ссылкой на пункты МУ: 4.2.11 (реакция РЧВ 15 с), 4.2.14.1 (дефицит первичной мощности), " & _
+                           "4.2.14.4 (колебания), 4.4.3/4.4.4 (отсутствие «адекватной» реакции без РМ / с РМ), 4.2.10 (оценка неблочной части по сумме)."
+    r = 8
+    If Not m_Protocol Is Nothing Then
+        For i = 1 To m_Protocol.Count
+            ws.Cells(r, 1).Value = CStr(m_Protocol(i))
+            If Left$(CStr(m_Protocol(i)), 2) <> "  " And Len(CStr(m_Protocol(i))) > 0 Then ws.Cells(r, 1).Font.Bold = True
+            If InStr(CStr(m_Protocol(i)), "ВЫВОД: НАРУШЕНИЕ") > 0 Then ws.Cells(r, 1).Font.Color = RGB(192, 0, 0)
+            If InStr(CStr(m_Protocol(i)), "ВЫВОД: ОК") > 0 Then ws.Cells(r, 1).Font.Color = RGB(0, 97, 0)
+            r = r + 1
+        Next i
+    End If
+    ws.Cells(r + 1, 1).Value = "Не автоматизировано (требует ручной проверки): срабатывание технологических защит / вмешательство персонала (п. 4.2.14.1, абз. 2), " & _
+                               "влияние команд диспетчера и АРЧМ (п. 4.2.9), правило трёх фактов за год для оборудования без РМ (п. 4.4.3), " & _
+                               "заявки на вывод из ОПРЧ / пуски и остановы (п. 4.1.6)."
+    ws.Columns("A").ColumnWidth = 160
+    ws.Range("A1:A" & (r + 1)).WrapText = True
+    ws.Range("A1:A" & (r + 1)).VerticalAlignment = xlTop
+End Sub
+
+' Нестрогий поиск колонки RawData: сравнение после нормализации (регистр, пробелы,
+' '_'/'-'/'.', латиница P/C/T/B/H/K/M/O/A/E/X -> кириллица); при неудаче - вхождение.
+Private Function FindHeaderColFuzzy(ByVal ws As Worksheet, ByVal headerName As String) As Long
+    Dim lastCol As Long, c As Long, v As String, target As String, found As Long
+    FindHeaderColFuzzy = FindHeaderCol(ws, headerName)
+    If FindHeaderColFuzzy > 0 Then Exit Function
+    target = NormalizeHeader(headerName)
+    If Len(target) = 0 Then Exit Function
+    lastCol = ws.Cells(1, ws.Columns.Count).End(xlToLeft).Column
+    For c = 1 To lastCol
+        v = NormalizeHeader(CStr(ws.Cells(1, c).Value))
+        If v = target Then FindHeaderColFuzzy = c: Exit Function
+    Next c
+    found = 0
+    For c = 1 To lastCol
+        v = NormalizeHeader(CStr(ws.Cells(1, c).Value))
+        If Len(v) > 0 Then
+            If InStr(v, target) > 0 Or InStr(target, v) > 0 Then
+                If found = 0 Then found = c Else found = -1: Exit For
+            End If
+        End If
+    Next c
+    If found > 0 Then
+        FindHeaderColFuzzy = found
+        AppendLog "INFO", "RawData", "Колонка '" & headerName & "' сопоставлена с '" & CStr(ws.Cells(1, found).Value) & "' (нестрогий поиск)"
+    End If
+End Function
+
+Private Function NormalizeHeader(ByVal s As String) As String
+    Dim t As String
+    t = UCase$(Trim$(s))
+    t = Replace(t, " ", ""): t = Replace(t, "_", ""): t = Replace(t, "-", ""): t = Replace(t, ".", ""): t = Replace(t, ",", "")
+    ' латиница -> кириллица (похожие по начертанию буквы)
+    t = Replace(t, "P", "Р"): t = Replace(t, "C", "С"): t = Replace(t, "T", "Т"): t = Replace(t, "B", "В")
+    t = Replace(t, "H", "Н"): t = Replace(t, "K", "К"): t = Replace(t, "M", "М"): t = Replace(t, "O", "О")
+    t = Replace(t, "A", "А"): t = Replace(t, "E", "Е"): t = Replace(t, "X", "Х"): t = Replace(t, "Y", "У")
+    NormalizeHeader = t
 End Function
 
 ' ==========================================================
@@ -884,11 +1991,10 @@ Private Sub EvaluateQualitative(ByVal wsRaw As Worksheet, ByRef st As TSettings,
     If Not hit10 Then
         Dim dFrEnd As Double, preqEnd As Double, haveEnd As Double
         dFrEnd = DeadbandDeviation(NzD(wsRaw.Cells(res.EndQualRow, fCol).Value, st.FNom) - st.FNom, g.Fnch)
-        preqEnd = -100# / g.SPct * g.PNom / st.FNom * _
+        preqEnd = PReqCalc(g.SPct, g.PNom, st.FNom, _
                   DynamicKdByTime(g.EquipType, SecBetween(wsRaw.Cells(res.StartRow, timeCol).Value, _
-                                                          wsRaw.Cells(res.EndQualRow, timeCol).Value)) * dFrEnd
-        If preqEnd > res.ReservePlus Then preqEnd = res.ReservePlus
-        If preqEnd < -res.ReserveMinus Then preqEnd = -res.ReserveMinus
+                                                          wsRaw.Cells(res.EndQualRow, timeCol).Value)), dFrEnd, st.MaxReqPct)
+        preqEnd = ClampReserve(preqEnd, res.ReservePlus, res.ReserveMinus)
         haveEnd = NzD(wsRaw.Cells(res.EndQualRow, pCol).Value, 0) - res.P0
         If SgnNZ(preqEnd) = 0 Or SgnNZ(preqEnd) <> signReq Then
             ' частота вернулась в зону нечувствительности (или сменила знак) -
@@ -925,7 +2031,8 @@ Private Sub EvaluateQualitative(ByVal wsRaw As Worksheet, ByRef st As TSettings,
     ' Если частота вернулась, Pтреб_ср близок к нулю и генератор тоже должен вернуться к P0.
     res.PReqSteady = ComputeSteadyPReqMean(wsRaw, fCol, timeCol, res.EndQualRow, _
                                            st.SteadyWindowSec, st.FNom, g.SPct, g.PNom, g.Fnch, _
-                                           g.EquipType, wsRaw.Cells(res.StartRow, timeCol).Value)
+                                           g.EquipType, wsRaw.Cells(res.StartRow, timeCol).Value, st.MaxReqPct)
+    res.PReqSteady = ClampReserve(res.PReqSteady, res.ReservePlus, res.ReserveMinus)
 
     ' допуск 0.5 с на дискретность выборки
     res.QualT5Pass = (hit5 And t5 <= g.T5Sec + 0.5)
@@ -993,9 +2100,10 @@ Private Function ComputeSteadyPReqMean(ByVal wsRaw As Worksheet, ByVal freqCol A
                                         ByVal endRow As Long, ByVal windowSec As Double, _
                                         ByVal fNom As Double, ByVal sPct As Double, ByVal pNom As Double, _
                                         ByVal fnch As Double, _
-                                        ByVal equipType As String, ByVal tStart As Variant) As Double
+                                        ByVal equipType As String, ByVal tStart As Variant, _
+                                        ByVal maxReqPct As Double) As Double
     ' Усреднённый Pтреб(t) за окно [endRow-windowSec ; endRow].
-    ' Pтреб(t) = -100/S * Pном/fном * Kd * dFr(t), где dFr - отклонение за fнч.
+    ' Pтреб(t) = -100/S * Pном/fном * Kd * dFr(t), где dFr - отклонение за fнч (с ограничением maxReqPct).
     Dim startRow As Long, r As Long
     Dim sumP As Double, cnt As Long
     Dim dFr As Double, fv As Double, kdEff As Double, tSec As Double
@@ -1010,7 +2118,7 @@ Private Function ComputeSteadyPReqMean(ByVal wsRaw As Worksheet, ByVal freqCol A
             dFr = DeadbandDeviation(fv, fnch)
             tSec = SecBetween(tStart, wsRaw.Cells(r, timeCol).Value)
             kdEff = DynamicKdByTime(equipType, tSec)
-            sumP = sumP + (-100# / sPct * pNom / fNom * kdEff * dFr)
+            sumP = sumP + PReqCalc(sPct, pNom, fNom, kdEff, dFr, maxReqPct)
             cnt = cnt + 1
         End If
     Next r
@@ -1131,10 +2239,10 @@ Private Sub WriteGeneratorSheet(ByVal wsRaw As Worksheet, ByRef st As TSettings,
     Dim signReq As Integer
 
     timeCol = FindHeaderCol(wsRaw, "Время")
-    pCol = FindHeaderCol(wsRaw, g.PowerHeader)
-    fCol = FindHeaderCol(wsRaw, g.FreqHeader)
+    pCol = FindHeaderColFuzzy(wsRaw, g.PowerHeader)
+    fCol = FindHeaderColFuzzy(wsRaw, g.FreqHeader)
 
-    shName = GeneratorSheetName(g)
+    shName = GeneratorSheetName(g, res.EventIdx)
     Set ws = EnsureSheet(shName)
     ws.Cells.Clear
     Do While ws.ChartObjects.Count > 0
@@ -1156,19 +2264,32 @@ Private Sub WriteGeneratorSheet(ByVal wsRaw As Worksheet, ByRef st As TSettings,
     ws.Range("A3:B3").Value = Array("Тип", g.EquipType)
     ws.Range("A4:B4").Value = Array("Старт (расч.)", res.StartTime)
     ws.Range("A5:B5").Value = Array("Выход за fнч", res.FirstExceedTime)
-    ws.Range("A6:B6").Value = Array("Колич. статус", quantStatusStr)
-    ws.Range("A7:B7").Value = Array("Кач. статус", IIf(res.QualPass, "ОК", "Нарушение"))
+    ws.Range("A6:B6").Value = Array("Колич. статус", IIf(res.QuantApplicable, quantStatusStr, "Н/П (п. 4.1.2)"))
+    ws.Range("A7:B7").Value = Array("Кач. статус", IIf(res.QualApplicable, IIf(res.QualPass, "ОК", "Нарушение"), "Н/П (п. 4.1.3)"))
     ws.Range("A8:B8").Value = Array("Характер", res.TransientType)
     ws.Range("A9:B9").Value = Array("Амплитуда, %Pном", Round(res.AmplPctPnom, 2))
     ws.Cells(1, 4).Resize(1, 2).Value = Array("P0, МВт", res.P0)
-    ws.Cells(2, 4).Resize(1, 2).Value = Array("Pтек, МВт", res.PTek)
+    ws.Cells(2, 4).Resize(1, 2).Value = Array("Pтек(tр), МВт", res.PTek)
     ws.Cells(3, 4).Resize(1, 2).Value = Array("Pуст_сред, МВт", res.PsteadyAvg)
-    ws.Cells(4, 4).Resize(1, 2).Value = Array("dF, Гц", res.Df)
-    ws.Cells(5, 4).Resize(1, 2).Value = Array("dFr, Гц", res.Dfr)
-    ws.Cells(6, 4).Resize(1, 2).Value = Array("Pтреб, МВт", res.PReq)
-    ws.Cells(7, 4).Resize(1, 2).Value = Array("Pфакт, МВт", res.PFact)
+    ws.Cells(4, 4).Resize(1, 2).Value = Array("dF макс, Гц", res.Df)
+    ws.Cells(5, 4).Resize(1, 2).Value = Array("dFr(tр), Гц", res.Dfr)
+    ws.Cells(6, 4).Resize(1, 2).Value = Array("Pтреб(tр), МВт", res.PReq)
+    ws.Cells(7, 4).Resize(1, 2).Value = Array("Pфакт(tр), МВт", res.PFact)
     ws.Cells(8, 4).Resize(1, 2).Value = Array("Колич. %", res.QuantPct)
     ws.Cells(9, 4).Resize(1, 2).Value = Array("Экстремумов", res.NumExtrema)
+
+    ' Блок 1.7.0 (X:Y): событие, tр, применимость, тип реакции, колебания, ТИ, h(15 с)
+    ws.Cells(1, 24).Resize(1, 2).Value = Array("Событие №", res.EventIdx)
+    ws.Cells(2, 24).Resize(1, 2).Value = Array("tр (п. 4.2.5)", res.TrTime)
+    ws.Cells(3, 24).Resize(1, 2).Value = Array("tр, с от старта", res.TrSec)
+    ws.Cells(4, 24).Resize(1, 2).Value = Array("Режим в tр", IIf(res.TrQuasiSteady, "квазиустановившийся (±15 с, 10 мГц)", "переходный"))
+    ws.Cells(5, 24).Resize(1, 2).Value = Array("Применимость", res.Applicability)
+    ws.Cells(6, 24).Resize(1, 2).Value = Array("Тип реакции (п. 4.4.1)", IIf(Len(res.ReactionType) > 0, res.ReactionType, "-"))
+    ws.Cells(7, 24).Resize(1, 2).Value = Array("Колебания (п. 4.2.14.4)", IIf(Len(res.OscNote) > 0, res.OscNote, "нет"))
+    ws.Cells(8, 24).Resize(1, 2).Value = Array("Качество ТИ", IIf(Len(res.TelemetryNote) > 0, res.TelemetryNote, "ОК"))
+    ws.Cells(9, 24).Resize(1, 2).Value = Array("h(15 с), Прил. п. 6.2", IIf(res.H15 > -900, Round(res.H15, 3), res.H15Note))
+    ws.Cells(10, 24).Resize(1, 2).Value = Array("Pтреб/Pфакт (Tинт), МВт", Format(res.PReqRef, "0.000") & " / " & Format(res.PFactRef, "0.000"))
+    ws.Cells(11, 24).Resize(1, 2).Value = Array("Режим / РМ", st.Mode & " / " & IIf(g.HasRM, "с РМ", "без РМ") & IIf(g.ForcedNoRM, " (S=6 %, fнч=0.15 Гц)", "") & " / " & g.Layout)
 
     ws.Cells(1, 7).Resize(1, 2).Value = Array("Pmax, МВт", res.PMaxEff)
     ws.Cells(2, 7).Resize(1, 2).Value = Array("Pmin, МВт", res.PMinEff)
@@ -1182,14 +2303,14 @@ Private Sub WriteGeneratorSheet(ByVal wsRaw As Worksheet, ByRef st As TSettings,
     ws.Cells(10, 7).Resize(1, 2).Value = Array("Дефицит (п. 4.2.14.1)", _
         IIf(res.DeficitSec > 0, "до " & Format(res.DeficitMaxPct, "0.00") & " %Pном, " & Format(res.DeficitSec, "0") & " с", "нет"))
 
-    ws.Range("A11:V11").Value = Array( _
+    ws.Range("A11:W11").Value = Array( _
         "Время", "Частота, Гц", "P, МВт", "dPфакт, МВт", "Pтреб_накоп, МВт", "dFr, Гц", _
-        "", "Уровень +допуск", "Уровень -допуск", _
+        "Маркер tр", "Уровень +допуск", "Уровень -допуск", _
         "Маркер t5", "Маркер t10", "Маркер выхода за fнч", _
         "dPmax", "dPmin", _
         "Pтреб_абс, МВт", "Уровень +допуск_абс", "Уровень -допуск_абс", _
         "Pmax, МВт", "Pmin, МВт", _
-        "Маркер t5_абс", "Маркер t10_абс", "Маркер fнч_абс" _
+        "Маркер t5_абс", "Маркер t10_абс", "Маркер fнч_абс", "Маркер tр_абс" _
     )
 
     If st.PreBufferSec > 0 Then
@@ -1200,6 +2321,8 @@ Private Sub WriteGeneratorSheet(ByVal wsRaw As Worksheet, ByRef st As TSettings,
         displayStartRow = res.StartRow
     End If
     endRow = RowByTimeOffset(wsRaw, timeCol, res.StartRow, MaxD(st.QuantIntervalSec, g.T10Sec))
+    If res.EventEndRow > endRow Then endRow = res.EventEndRow
+    If res.TrRow > endRow Then endRow = res.TrRow
     outR = 12
 
     ' Уровни для маркеров. Целевой уровень = Pтреб (масштабируется к событию).
@@ -1225,8 +2348,9 @@ Private Sub WriteGeneratorSheet(ByVal wsRaw As Worksheet, ByRef st As TSettings,
     For r = displayStartRow To endRow
         dP = NzD(wsRaw.Cells(r, pCol).Value, 0) - res.P0
         dFr = DeadbandDeviation(NzD(wsRaw.Cells(r, fCol).Value, st.FNom) - st.FNom, g.Fnch)
-        preqStep = -100# / g.SPct * g.PNom / st.FNom * DynamicKdByTime(g.EquipType, _
-                   SecBetween(wsRaw.Cells(res.StartRow, timeCol).Value, wsRaw.Cells(r, timeCol).Value)) * dFr
+        preqStep = ClampReserve(PReqCalc(g.SPct, g.PNom, st.FNom, DynamicKdByTime(g.EquipType, _
+                   SecBetween(wsRaw.Cells(res.StartRow, timeCol).Value, wsRaw.Cells(r, timeCol).Value)), dFr, st.MaxReqPct), _
+                   res.ReservePlus, res.ReserveMinus)
 
         ws.Cells(outR, 1).Value = wsRaw.Cells(r, timeCol).Value
         ws.Cells(outR, 2).Value = wsRaw.Cells(r, fCol).Value
@@ -1253,11 +2377,15 @@ Private Sub WriteGeneratorSheet(ByVal wsRaw As Worksheet, ByRef st As TSettings,
     FillMarkerColumn ws, displayStartRow, endRow, wsRaw, timeCol, res.StartRow, g.T5Sec, 20, markerHiAbs, markerLoAbs
     FillMarkerColumn ws, displayStartRow, endRow, wsRaw, timeCol, res.StartRow, g.T10Sec, 21, markerHiAbs, markerLoAbs
     FillMarkerColumnAtTime ws, displayStartRow, endRow, wsRaw, timeCol, res.FirstExceedTime, 22, markerHiAbs, markerLoAbs
+    FillMarkerColumnAtTime ws, displayStartRow, endRow, wsRaw, timeCol, res.TrTime, 7, markerSpan, -markerSpan
+    FillMarkerColumnAtTime ws, displayStartRow, endRow, wsRaw, timeCol, res.TrTime, 23, markerHiAbs, markerLoAbs
 
     chartEndRow = outR - 1
 
-    ws.Columns("A:V").AutoFit
+    ws.Columns("A:W").AutoFit
     ApplyGeneratorSheetFormats ws
+    ws.Columns("X").ColumnWidth = 24
+    ws.Columns("Y").ColumnWidth = 60
     ' Вывод записываем после AutoFit, чтобы длинный текст не растягивал колонку B
     ws.Cells(10, 1).Value = "Вывод"
     ws.Cells(10, 2).Value = res.Verdict
@@ -1315,9 +2443,15 @@ Private Sub ApplyGeneratorSheetFormats(ByVal ws As Worksheet)
     ws.Range("H6").NumberFormat = "@"
     ws.Range("H7").NumberFormat = "0.000"
     ws.Range("H8:H10").NumberFormat = "@"
-    ws.Range("A11:V11").NumberFormat = "@"
+    ws.Range("A11:W11").NumberFormat = "@"
     ws.Range("A12:A100000").NumberFormat = "dd.mm.yyyy hh:mm:ss"
-    ws.Range("B12:V100000").NumberFormat = "0.000"
+    ws.Range("B12:W100000").NumberFormat = "0.000"
+    ws.Range("X1:X11").NumberFormat = "@"
+    ws.Range("Y1").NumberFormat = "0"
+    ws.Range("Y2").NumberFormat = "dd.mm.yyyy hh:mm:ss"
+    ws.Range("Y3").NumberFormat = "0"
+    ws.Range("Y4:Y11").NumberFormat = "@"
+    ws.Range("Y4:Y11").WrapText = True
 End Sub
 
 ' ==========================================================
@@ -1334,8 +2468,8 @@ Private Sub WriteGeneratorChartSheet(ByRef st As TSettings, ByRef g As TGenCfg, 
     Dim yMin As Double, yMax As Double, yPad As Double
     Dim farPos As Double, farNeg As Double, farAbs As Double
 
-    dataSheet = GeneratorSheetName(g)
-    chartSheet = GeneratorChartSheetName(g)
+    dataSheet = GeneratorSheetName(g, res.EventIdx)
+    chartSheet = GeneratorChartSheetName(g, res.EventIdx)
     Set wsData = ThisWorkbook.Worksheets(dataSheet)
     Set wsChart = EnsureSheet(chartSheet)
 
@@ -1345,7 +2479,7 @@ Private Sub WriteGeneratorChartSheet(ByRef st As TSettings, ByRef g As TGenCfg, 
     Loop
 
     ' Заголовок
-    wsChart.Range("A1").Value = "График ОПРЧ: " & g.Station & " / " & g.Generator
+    wsChart.Range("A1").Value = "График ОПРЧ: " & g.Station & " / " & g.Generator & IIf(res.EventIdx > 1, " (событие " & res.EventIdx & ")", "")
     wsChart.Range("A1").Font.Bold = True
     wsChart.Range("A1").Font.Size = 14
 
@@ -1359,11 +2493,11 @@ Private Sub WriteGeneratorChartSheet(ByRef st As TSettings, ByRef g As TGenCfg, 
     endChartDataRow = FindChartEndRow(wsData, 12, lastDataRow, res.StartTime, st.ChartIntervalSec)
     If endChartDataRow < startDataRow Then endChartDataRow = lastDataRow
 
-    Set chartObj = wsChart.ChartObjects.Add(10, 170, 1020, 360)
+    Set chartObj = wsChart.ChartObjects.Add(10, 215, 1020, 360)
     With chartObj.Chart
         .ChartType = xlLine
         .HasTitle = True
-        .ChartTitle.Text = "Мониторинг ОПРЧ: " & g.Station & " / " & g.Generator
+        .ChartTitle.Text = "Мониторинг ОПРЧ: " & g.Station & " / " & g.Generator & IIf(res.EventIdx > 1, " (событие " & res.EventIdx & ")", "")
         On Error Resume Next
         .Axes(xlCategory).CategoryType = xlCategoryScale
         On Error GoTo 0
@@ -1385,6 +2519,7 @@ Private Sub WriteGeneratorChartSheet(ByRef st As TSettings, ByRef g As TGenCfg, 
         AddMarkerSeries chartObj.Chart, wsData, startDataRow, endChartDataRow, 1, 10, "t5"
         AddMarkerSeries chartObj.Chart, wsData, startDataRow, endChartDataRow, 1, 11, "t10"
         AddMarkerSeries chartObj.Chart, wsData, startDataRow, endChartDataRow, 1, 12, "Выход за fнч"
+        AddMarkerSeries chartObj.Chart, wsData, startDataRow, endChartDataRow, 1, 7, "tр"
     End If
 
     On Error Resume Next
@@ -1411,13 +2546,14 @@ Private Sub WriteGeneratorChartSheet(ByRef st As TSettings, ByRef g As TGenCfg, 
         .MaximumScale = st.FNom + ySpan
     End With
     On Error GoTo 0
+    ApplyChartAxesFormat chartObj.Chart, wsData, startDataRow, endChartDataRow, "dP, МВт", "f, Гц"
 
     ' Второй график: абсолютные единицы (P, МВт и f, Гц)
-    Set chartObj = wsChart.ChartObjects.Add(10, 550, 1020, 360)
+    Set chartObj = wsChart.ChartObjects.Add(10, 595, 1020, 360)
     With chartObj.Chart
         .ChartType = xlLine
         .HasTitle = True
-        .ChartTitle.Text = "Мониторинг ОПРЧ (абсолютные): " & g.Station & " / " & g.Generator
+        .ChartTitle.Text = "Мониторинг ОПРЧ (абсолютные): " & g.Station & " / " & g.Generator & IIf(res.EventIdx > 1, " (событие " & res.EventIdx & ")", "")
         On Error Resume Next
         .Axes(xlCategory).CategoryType = xlCategoryScale
         On Error GoTo 0
@@ -1436,6 +2572,7 @@ Private Sub WriteGeneratorChartSheet(ByRef st As TSettings, ByRef g As TGenCfg, 
         AddMarkerSeries chartObj.Chart, wsData, startDataRow, endChartDataRow, 1, 20, "t5 abs"
         AddMarkerSeries chartObj.Chart, wsData, startDataRow, endChartDataRow, 1, 21, "t10 abs"
         AddMarkerSeries chartObj.Chart, wsData, startDataRow, endChartDataRow, 1, 22, "fнч abs"
+        AddMarkerSeries chartObj.Chart, wsData, startDataRow, endChartDataRow, 1, 23, "tр abs"
     End If
 
     On Error Resume Next
@@ -1461,6 +2598,44 @@ Private Sub WriteGeneratorChartSheet(ByRef st As TSettings, ByRef g As TGenCfg, 
         .MinimumScale = st.FNom - ySpan
         .MaximumScale = st.FNom + ySpan
     End With
+    On Error GoTo 0
+    ApplyChartAxesFormat chartObj.Chart, wsData, startDataRow, endChartDataRow, "P, МВт", "f, Гц"
+End Sub
+
+' Оформление осей по И.2 Приложения 1: подписи осей с единицами измерения,
+' вертикальная сетка не реже чем через 15 с (по числу точек на 15 с), подписи времени.
+Private Sub ApplyChartAxesFormat(ByVal ch As Chart, ByVal wsData As Worksheet, ByVal r1 As Long, ByVal r2 As Long, _
+                                 ByVal yTitle As String, ByVal y2Title As String)
+    Dim n As Long, spanSec As Double, ptsPer15 As Long
+    On Error Resume Next
+    n = r2 - r1 + 1
+    spanSec = SecBetween(wsData.Cells(r1, 1).Value, wsData.Cells(r2, 1).Value)
+    If spanSec > 0 And n > 1 Then
+        ptsPer15 = CLng(15# * (n - 1) / spanSec)
+    Else
+        ptsPer15 = 15
+    End If
+    If ptsPer15 < 1 Then ptsPer15 = 1
+    With ch.Axes(xlCategory)
+        .HasTitle = True
+        .AxisTitle.Text = "Время, чч:мм:сс"
+        .HasMajorGridlines = True
+        .MajorGridlines.Format.Line.ForeColor.RGB = RGB(217, 217, 217)
+        .TickMarkSpacing = ptsPer15
+        .TickLabelSpacing = ptsPer15
+        .TickLabels.Orientation = 90
+    End With
+    With ch.Axes(xlValue, xlPrimary)
+        .HasTitle = True
+        .AxisTitle.Text = yTitle
+        .HasMajorGridlines = True
+    End With
+    With ch.Axes(xlValue, xlSecondary)
+        .HasTitle = True
+        .AxisTitle.Text = y2Title
+    End With
+    ch.HasLegend = True
+    ch.Legend.Position = xlLegendPositionBottom
     On Error GoTo 0
 End Sub
 
@@ -1564,26 +2739,41 @@ Private Sub WriteChartVerdictBlock(ByVal wsChart As Worksheet, ByRef g As TGenCf
     wsChart.Range("E9").Value = IIf(res.DeficitSec > 0, "до " & Format(res.DeficitMaxPct, "0.00") & " %Pном, " & _
                                 Format(res.DeficitSec, "0") & " с (п. 4.2.14.1)", "нет")
 
-    wsChart.Range("A10").Value = "Вывод:"
-    wsChart.Range("B10").Value = res.Verdict
+    wsChart.Range("A10").Value = "tр / применимость:"
+    wsChart.Range("B10").Value = IIf(IsDate(res.TrTime), Format(res.TrTime, "hh:mm:ss"), "-") & " (" & Format(res.TrSec, "0") & " с, " & _
+                                 IIf(res.TrQuasiSteady, "квазиуст.", "переходный") & "); " & res.Applicability
+    wsChart.Range("A11").Value = "Тип реакции / ТИ:"
+    wsChart.Range("B11").Value = IIf(Len(res.ReactionType) > 0, res.ReactionType & " (п. 4.4.1)", "-") & _
+                                 IIf(Len(res.QualClauseVerdict) > 0, "; " & res.QualClauseVerdict, "") & _
+                                 IIf(Len(res.TelemetryNote) > 0, "; " & res.TelemetryNote, "") & _
+                                 IIf(Len(res.OscNote) > 0, "; " & res.OscNote, "") & _
+                                 IIf(res.H15 > -900, "; h(15 с) = " & Format(res.H15, "0.00"), "")
 
-    wsChart.Range("A3:A10").Font.Bold = True
+    wsChart.Range("A12").Value = "Вывод:"
+    wsChart.Range("B12").Value = res.Verdict
+
+    wsChart.Range("A3:A12").Font.Bold = True
     wsChart.Range("D3:D9").Font.Bold = True
-    wsChart.Range("A3:E10").NumberFormat = "@"
+    wsChart.Range("A3:E12").NumberFormat = "@"
     If res.Limited Then
         wsChart.Range("B3").Font.Color = RGB(156, 87, 0)
         wsChart.Range("B3").Interior.Color = RGB(255, 235, 156)
         wsChart.Range("E7").Font.Color = RGB(156, 87, 0)
-    ElseIf Not res.QuantPass Then
+    ElseIf Not res.QuantPass And res.QuantApplicable Then
         wsChart.Range("B3").Font.Color = RGB(192, 0, 0)
     End If
-    If Not res.QualPass Then wsChart.Range("B4").Font.Color = RGB(192, 0, 0)
-    If res.TransientType = "Колебательный" Then wsChart.Range("B5").Font.Color = RGB(192, 0, 0)
+    If Not res.QuantApplicable Then wsChart.Range("B3").Value = "Н/П (п. 4.1.2) - справочно: " & quantCell
+    If Not res.QualApplicable Then wsChart.Range("B4").Value = "Н/П (п. 4.1.3)"
+    If Not res.QualPass And res.QualApplicable Then wsChart.Range("B4").Font.Color = RGB(192, 0, 0)
+    If res.TransientType = "Колебательный" Or res.OscViolation Then wsChart.Range("B5").Font.Color = RGB(192, 0, 0)
     If res.React15Status = "Нарушение" Then wsChart.Range("B9").Font.Color = RGB(192, 0, 0)
+    If Left$(res.QualClauseVerdict, 9) = "НАРУШЕНИЕ" Then wsChart.Range("B11").Font.Color = RGB(192, 0, 0)
     If Left$(res.Verdict, 9) = "НАРУШЕНИЕ" Then
-        wsChart.Range("B10").Font.Color = RGB(192, 0, 0)
+        wsChart.Range("B12").Font.Color = RGB(192, 0, 0)
+    ElseIf Left$(res.Verdict, 2) = "ОК" Then
+        wsChart.Range("B12").Font.Color = RGB(0, 97, 0)
     Else
-        wsChart.Range("B10").Font.Color = RGB(0, 97, 0)
+        wsChart.Range("B12").Font.Color = RGB(89, 89, 89)
     End If
 End Sub
 
@@ -1634,7 +2824,7 @@ Private Sub BuildStationAggregates(ByVal wsRaw As Worksheet, ByVal wsCfg As Work
 
     For r = 2 To cfgLast
         If Len(Trim$(CStr(wsCfg.Cells(r, 2).Value))) = 0 Then GoTo NX
-        g = ReadGenCfg(wsCfg, r)
+        g = ReadGenCfgEff(wsCfg, r, st)
         If g.Enabled And g.InStationSum And Len(g.Station) > 0 Then
             If Not done.Exists(g.Station) Then
                 done(g.Station) = 1
@@ -1660,7 +2850,7 @@ Private Sub BuildParoprovodSubAggregates(ByVal wsRaw As Worksheet, ByVal wsCfg A
     cfgLast = LastUsedRow(wsCfg)
     For r = 2 To cfgLast
         If Len(Trim$(CStr(wsCfg.Cells(r, 2).Value))) = 0 Then GoTo NX
-        g = ReadGenCfg(wsCfg, r)
+        g = ReadGenCfgEff(wsCfg, r, st)
         If g.Enabled And g.InStationSum And StationMatch(g.Station, stationName) Then
             If Len(g.Paroprovod) > 0 Then
                 If paropipes.Exists(g.Paroprovod) Then
@@ -1700,26 +2890,18 @@ Private Sub BuildOneStationAggregate(ByVal wsRaw As Worksheet, ByVal wsCfg As Wo
     Dim pCols() As Long, fnchArr() As Double, sArr() As Double, pnomArr() As Double, etArr() As String
     Dim pmaxArr() As Double, pminArr() As Double
     Dim freqCol As Long, timeCol As Long
-    Dim shName As String, ws As Worksheet
-    Dim startRow As Long, endRow As Long, rowQ As Long, firstExceedRow As Long
-    Dim p0 As Double, pNow As Double, preq As Double, preqOrig As Double
-    Dim pfact As Double, dF As Double
-    Dim i As Long, dfr As Double
-    Dim suffix As String
-    Dim pMaxSum As Double, pMinSum As Double, pNomSum As Double
-    Dim reservePlus As Double, reserveMinus As Double
-    Dim limited As Boolean, limitType As String
-    Dim sr As TStationResult
-    Dim srcLabel As String
+    Dim isNeblok As Boolean
+    Dim evList() As TEvent, nEv As Long, k As Long
 
     cfgLast = LastUsedRow(wsCfg)
     timeCol = FindHeaderCol(wsRaw, "Время")
     If timeCol = 0 Then Exit Sub
 
     cnt = 0
+    isNeblok = False
     For r = 2 To cfgLast
         If Len(Trim$(CStr(wsCfg.Cells(r, 2).Value))) = 0 Then GoTo NextCfg
-        g = ReadGenCfg(wsCfg, r)
+        g = ReadGenCfgEff(wsCfg, r, st)
         If g.Enabled And g.InStationSum Then
             If StationMatch(g.Station, stationName) Then
                 If Len(paropipeFilter) = 0 Or StrComp(g.Paroprovod, paropipeFilter, vbTextCompare) = 0 Then
@@ -1731,7 +2913,7 @@ Private Sub BuildOneStationAggregate(ByVal wsRaw As Worksheet, ByVal wsCfg As Wo
                     ReDim Preserve etArr(1 To cnt)
                     ReDim Preserve pmaxArr(1 To cnt)
                     ReDim Preserve pminArr(1 To cnt)
-                    pCols(cnt) = FindHeaderCol(wsRaw, g.PowerHeader)
+                    pCols(cnt) = FindHeaderColFuzzy(wsRaw, g.PowerHeader)
                     If pCols(cnt) = 0 Then cnt = cnt - 1: GoTo NextCfg
                     fnchArr(cnt) = g.Fnch
                     sArr(cnt) = g.SPct
@@ -1739,7 +2921,8 @@ Private Sub BuildOneStationAggregate(ByVal wsRaw As Worksheet, ByVal wsCfg As Wo
                     etArr(cnt) = g.EquipType
                     pmaxArr(cnt) = g.PMax
                     pminArr(cnt) = g.PMin
-                    If freqCol = 0 Then freqCol = FindHeaderCol(wsRaw, g.FreqHeader)
+                    If UCase$(g.Layout) = "НЕБЛОК" Then isNeblok = True
+                    If freqCol = 0 Then freqCol = FindHeaderColFuzzy(wsRaw, g.FreqHeader)
                 End If
             End If
         End If
@@ -1748,9 +2931,41 @@ NextCfg:
     If cnt = 0 Then Exit Sub
     If freqCol = 0 Then Exit Sub
 
-    srcLabel = stationName & IIf(Len(paropipeFilter) > 0, "/" & paropipeFilter, "") & " (сумма)"
+    nEv = FindEvents(wsRaw, timeCol, freqCol, st, MinArray(fnchArr), evList)
+    For k = 1 To nEv
+        BuildOneStationAggregateEvent wsRaw, wsSummary, stationName, paropipeFilter, st, outRow, _
+                                      pCols, fnchArr, sArr, pnomArr, etArr, pmaxArr, pminArr, cnt, _
+                                      freqCol, timeCol, isNeblok, evList(k), k
+    Next k
+End Sub
 
-    startRow = ResolveStartRow(wsRaw, timeCol, freqCol, st, MinArray(fnchArr), firstExceedRow)
+Private Sub BuildOneStationAggregateEvent(ByVal wsRaw As Worksheet, ByVal wsSummary As Worksheet, _
+                                      ByVal stationName As String, ByVal paropipeFilter As String, _
+                                      ByRef st As TSettings, ByRef outRow As Long, _
+                                      ByRef pCols() As Long, ByRef fnchArr() As Double, ByRef sArr() As Double, _
+                                      ByRef pnomArr() As Double, ByRef etArr() As String, _
+                                      ByRef pmaxArr() As Double, ByRef pminArr() As Double, ByVal cnt As Long, _
+                                      ByVal freqCol As Long, ByVal timeCol As Long, ByVal isNeblok As Boolean, _
+                                      ByRef ev As TEvent, ByVal evIdx As Long)
+    Dim r As Long
+    Dim shName As String, ws As Worksheet
+    Dim startRow As Long, endRow As Long, rowQ As Long, firstExceedRow As Long, evEnd As Long
+    Dim p0 As Double, pNow As Double, preq As Double, preqOrig As Double
+    Dim pfact As Double, dF As Double
+    Dim i As Long, dfr As Double
+    Dim suffix As String
+    Dim pMaxSum As Double, pMinSum As Double, pNomSum As Double
+    Dim reservePlus As Double, reserveMinus As Double
+    Dim limited As Boolean, limitType As String
+    Dim sr As TStationResult
+    Dim srcLabel As String
+
+    srcLabel = stationName & IIf(Len(paropipeFilter) > 0, "/" & paropipeFilter, "") & " (сумма)" & IIf(evIdx > 1, " событие " & evIdx, "")
+
+    startRow = ev.StartRow
+    firstExceedRow = ev.FirstExceedRow
+    evEnd = ev.EndRow
+    If evEnd < startRow Then evEnd = startRow
     endRow = RowByTimeOffset(wsRaw, timeCol, startRow, st.QuantIntervalSec)
 
     ' П. 4.2.10: сумма по включённому в работу (P > порога) и готовому к ОПРЧ оборудованию.
@@ -1770,9 +2985,9 @@ NextCfg:
             pNomSum = pNomSum + pnomArr(i)
         End If
     Next i
+    Dim rA As Long, r1 As Long, sumA As Double, cntA As Long
     If st.AvgWindowSec > 0 Then
         ' п. 4.2.6: усреднение суммарной мощности на окне перед стартом
-        Dim rA As Long, r1 As Long, sumA As Double, cntA As Long
         r1 = RowByTimeOffset(wsRaw, timeCol, startRow, -st.AvgWindowSec)
         If r1 < 2 Then r1 = 2
         For rA = r1 To startRow
@@ -1780,33 +2995,149 @@ NextCfg:
             cntA = cntA + 1
         Next rA
         If cntA > 0 Then p0 = sumA / cntA
-        sumA = 0: cntA = 0
-        r1 = RowByTimeOffset(wsRaw, timeCol, endRow, -st.AvgWindowSec)
-        If r1 < 2 Then r1 = 2
-        For rA = r1 To endRow
-            sumA = sumA + SumPowerAtRow(wsRaw, pCols, cnt, rA, st.WorkThresholdMW)
-            cntA = cntA + 1
-        Next rA
-        If cntA > 0 Then pNow = sumA / cntA Else pNow = SumPowerAtRow(wsRaw, pCols, cnt, endRow, st.WorkThresholdMW)
-    Else
-        pNow = SumPowerAtRow(wsRaw, pCols, cnt, endRow, st.WorkThresholdMW)
     End If
 
-    dF = MaxAbsDeviationInWindow(wsRaw, freqCol, startRow, endRow, st.FNom)
-    preqOrig = 0
-    Dim tSecAgg As Double
-    tSecAgg = SecBetween(wsRaw.Cells(startRow, timeCol).Value, wsRaw.Cells(endRow, timeCol).Value)
-    For i = 1 To cnt
-        If inWork(i) Then
-            dfr = DeadbandDeviation(dF, fnchArr(i))
-            preqOrig = preqOrig + (-100# / sArr(i) * pnomArr(i) / st.FNom * DynamicKdByTime(etArr(i), tSecAgg) * dfr)
-        End If
-    Next i
+    ' --- Таблица по точкам окна события и дефицит (п. 4.2.14.1) ---
+    If Len(paropipeFilter) > 0 Then
+        suffix = "_Сумма_" & paropipeFilter
+    Else
+        suffix = "_Сумма"
+    End If
+    shName = StationSheetName(stationName, paropipeFilter, evIdx)
+    Set ws = EnsureSheet(shName)
+    ws.Cells.Clear
 
+    ws.Range("A10:H10").Value = Array("Время", "Частота, Гц", "Pсум, МВт", "dPсум, МВт", "Pтреб_сум, МВт", _
+                                       "dPmax_сум", "dPmin_сум", "Дефицит_сум, МВт")
+    rowQ = 11
+    Dim dPmaxRel As Double, dPminRel As Double
+    Dim defMaxPct As Double, defSec As Double, tolSum As Double
+    Dim preqStep As Double, preqCap As Double, allowed As Double, have As Double, deficit As Double, dt As Double
+    Dim tSecAgg As Double, fMean As Double, isQS As Boolean
+    Dim trRow As Long, trDef As Double, anyQS As Boolean, trDfrRow As Long, trDfrAbs As Double
+    Dim run02 As Double, best02 As Double, dfAbs As Double
     reservePlus = pMaxSum - p0
     reserveMinus = p0 - pMinSum
     If reservePlus < 0 Then reservePlus = 0
     If reserveMinus < 0 Then reserveMinus = 0
+    dPmaxRel = pMaxSum - p0
+    dPminRel = pMinSum - p0
+    tolSum = 0.01 * pNomSum
+    defMaxPct = 0
+    defSec = 0
+    trRow = 0: trDef = -1E+99: anyQS = False: trDfrRow = 0: trDfrAbs = 0
+    run02 = 0: best02 = 0
+    dF = 0
+    For r = startRow To evEnd
+        ws.Cells(rowQ, 1).Value = wsRaw.Cells(r, timeCol).Value
+        ws.Cells(rowQ, 2).Value = wsRaw.Cells(r, freqCol).Value
+
+        pNow = SumPowerAtRow(wsRaw, pCols, cnt, r, st.WorkThresholdMW)
+        ws.Cells(rowQ, 3).Value = pNow
+        ws.Cells(rowQ, 4).Value = pNow - p0
+
+        dfAbs = NzD(wsRaw.Cells(r, freqCol).Value, st.FNom) - st.FNom
+        If Abs(dfAbs) > Abs(dF) Then dF = dfAbs
+        If r < evEnd Then
+            dt = SecBetween(wsRaw.Cells(r, timeCol).Value, wsRaw.Cells(r + 1, timeCol).Value)
+        Else
+            dt = 1
+        End If
+        If dt <= 0 Or dt > 60 Then dt = 1
+        If Abs(dfAbs) >= QUANT_DF_HZ - 0.0000001 Then
+            run02 = run02 + dt
+            If run02 > best02 Then best02 = run02
+        Else
+            run02 = 0
+        End If
+
+        preqStep = 0
+        tSecAgg = SecBetween(wsRaw.Cells(startRow, timeCol).Value, wsRaw.Cells(r, timeCol).Value)
+        For i = 1 To cnt
+            If inWork(i) Then
+                dfr = DeadbandDeviation(dfAbs, fnchArr(i))
+                preqStep = preqStep + PReqCalc(sArr(i), pnomArr(i), st.FNom, DynamicKdByTime(etArr(i), tSecAgg), dfr, st.MaxReqPct)
+            End If
+        Next i
+        ws.Cells(rowQ, 5).Value = preqStep
+        ws.Cells(rowQ, 6).Value = dPmaxRel
+        ws.Cells(rowQ, 7).Value = dPminRel
+
+        ' п. 4.2.14.1: дефицит суммарной первичной мощности по точке (допуск 1 %Pном_сум);
+        ' первые 15 с (переходный участок) не оцениваются - см. реакция РЧВ (п. 4.2.11)
+        deficit = 0
+        preqCap = ClampReserve(preqStep, reservePlus, reserveMinus)
+        allowed = Abs(preqCap) - tolSum
+        If allowed > 0 And tSecAgg >= 15 Then
+            have = SgnNZ(preqCap) * (pNow - p0)
+            deficit = allowed - have
+            If deficit < 0 Then deficit = 0
+        End If
+        ws.Cells(rowQ, 8).Value = deficit
+        If deficit > 0 And pNomSum > 0 Then
+            If 100# * deficit / pNomSum > defMaxPct Then defMaxPct = 100# * deficit / pNomSum
+            defSec = defSec + dt
+        End If
+
+        ' выбор tр: худшая квазиустановившаяся точка (п. 4.2.5 / Приложение)
+        If tSecAgg >= 15 And preqCap <> 0 Then
+            isQS = IsQuasiSteady(wsRaw, freqCol, timeCol, r, st.FNom, fMean)
+            If isQS Then
+                If DeadbandDeviation(fMean - st.FNom, MinArray(fnchArr)) <> 0 Then
+                    anyQS = True
+                    have = SgnNZ(preqCap) * (pNow - p0)
+                    If (Abs(preqCap) - tolSum) - have > trDef Then trDef = (Abs(preqCap) - tolSum) - have: trRow = r
+                    If Abs(fMean - st.FNom) > trDfrAbs Then trDfrAbs = Abs(fMean - st.FNom): trDfrRow = r
+                End If
+            End If
+        End If
+        rowQ = rowQ + 1
+    Next r
+
+    ' --- Момент оценки tр и показатели в нём ---
+    Dim trQS As Boolean
+    If anyQS Then
+        If trDef > 0 Then
+            ' дефицит есть - худшая точка
+        Else
+            trRow = IIf(trDfrRow > 0, trDfrRow, trRow)
+        End If
+        trQS = True
+    Else
+        trRow = endRow
+        trQS = False
+    End If
+    If trRow < startRow Then trRow = startRow
+    If trRow > evEnd And anyQS Then trRow = evEnd
+    tSecAgg = SecBetween(wsRaw.Cells(startRow, timeCol).Value, wsRaw.Cells(trRow, timeCol).Value)
+
+    If st.AvgWindowSec > 0 Then
+        sumA = 0: cntA = 0
+        r1 = RowByTimeOffset(wsRaw, timeCol, trRow, -st.AvgWindowSec)
+        If r1 < 2 Then r1 = 2
+        For rA = r1 To trRow
+            sumA = sumA + SumPowerAtRow(wsRaw, pCols, cnt, rA, st.WorkThresholdMW)
+            cntA = cntA + 1
+        Next rA
+        If cntA > 0 Then pNow = sumA / cntA Else pNow = SumPowerAtRow(wsRaw, pCols, cnt, trRow, st.WorkThresholdMW)
+    Else
+        pNow = SumPowerAtRow(wsRaw, pCols, cnt, trRow, st.WorkThresholdMW)
+    End If
+    pfact = pNow - p0
+
+    Dim dfTr As Double
+    If trQS Then
+        dfTr = MeanFreqAround(wsRaw, freqCol, timeCol, trRow, QS_HALF_WINDOW_SEC, st.FNom) - st.FNom
+    Else
+        dfTr = MaxAbsDeviationInWindow(wsRaw, freqCol, startRow, trRow, st.FNom)
+    End If
+    preqOrig = 0
+    For i = 1 To cnt
+        If inWork(i) Then
+            dfr = DeadbandDeviation(dfTr, fnchArr(i))
+            preqOrig = preqOrig + PReqCalc(sArr(i), pnomArr(i), st.FNom, DynamicKdByTime(etArr(i), tSecAgg), dfr, st.MaxReqPct)
+        End If
+    Next i
     preq = preqOrig
     limited = False
     limitType = ""
@@ -1815,8 +3146,6 @@ NextCfg:
     ElseIf preq < -reserveMinus Then
         preq = -reserveMinus: limited = True: limitType = "Pmin"
     End If
-    pfact = pNow - p0
-
     If limited Then
         AppendLog "INFO", srcLabel, _
                   "Pтреб_сум ограничен " & limitType & ": было " & Format(preqOrig, "0.000") & _
@@ -1825,7 +3154,7 @@ NextCfg:
 
     ' Количественный критерий по сумме (как для генератора)
     Dim qpct As Double, qpass As Boolean, dfrMin As Double
-    dfrMin = DeadbandDeviation(dF, MinArray(fnchArr))
+    dfrMin = DeadbandDeviation(dfTr, MinArray(fnchArr))
     If dfrMin = 0 Then
         qpct = 100: qpass = True
     ElseIf Abs(preq) < 0.000001 Then
@@ -1835,6 +3164,19 @@ NextCfg:
     Else
         qpct = 100# * SafeDiv(Abs(pfact), Abs(preq), 0)
         qpass = (qpct >= (100# - st.QuantTolPct))
+    End If
+
+    ' Применимость количественной оценки по сумме (п. 4.1.2)
+    If st.IsEmergency Then
+        sr.QuantApplicable = (best02 >= QUANT_MIN_SEC_TES - 0.5)
+        If sr.QuantApplicable Then
+            sr.Applicability = "колич. (п. 4.1.2: |dF| >= 0.2 Гц в течение " & Format(best02, "0") & " с)"
+        Else
+            sr.Applicability = "колич. оценка не применяется (п. 4.1.2: |dF| >= 0.2 Гц " & Format(best02, "0") & " с < 30 с; |dF|max = " & Format(Abs(dF), "0.000") & " Гц)"
+        End If
+    Else
+        sr.QuantApplicable = True
+        sr.Applicability = "Испытание: применимость по п. 4.1.2 не проверяется"
     End If
 
     ' п. 4.2.11 / 4.4.2: наличие реакции РЧВ через 15 с по суммарной мощности
@@ -1851,30 +3193,24 @@ NextCfg:
             dfr15 = DeadbandDeviation(NzD(wsRaw.Cells(row15, freqCol).Value, st.FNom) - st.FNom, fnchArr(i))
             If dfr15 <> 0 Then
                 anyOutside = True
-                preq15Sum = preq15Sum + (-100# / sArr(i) * pnomArr(i) / st.FNom * DynamicKdByTime(etArr(i), 15#) * dfr15)
+                preq15Sum = preq15Sum + PReqCalc(sArr(i), pnomArr(i), st.FNom, DynamicKdByTime(etArr(i), 15#), dfr15, st.MaxReqPct)
             End If
         End If
     Next i
-    If preq15Sum > reservePlus Then preq15Sum = reservePlus
-    If preq15Sum < -reserveMinus Then preq15Sum = -reserveMinus
-    ClassifyReaction15 st, dp15, pNomSum, SgnNZ(preqOrig), reservePlus, reserveMinus, _
+    preq15Sum = ClampReserve(preq15Sum, reservePlus, reserveMinus)
+    Dim needSignSum As Integer
+    needSignSum = SgnNZ(preqOrig)
+    If needSignSum = 0 Then needSignSum = -SgnNZ(DeadbandDeviation(dF, MinArray(fnchArr)))
+    ClassifyReaction15 st, dp15, pNomSum, needSignSum, reservePlus, reserveMinus, _
                        React15ThresholdMW(st, pNomSum, preq15Sum), (Not anyOutside), r15Status, r15Pass, r15Note
     If r15Status = "Нарушение" Then AppendLog "WARN", srcLabel, "п. 4.2.11: " & r15Note
 
-    If Len(paropipeFilter) > 0 Then
-        suffix = "_Сумма_" & paropipeFilter
-    Else
-        suffix = "_Сумма"
-    End If
-    shName = MakeSheetName(stationName & suffix)
-    Set ws = EnsureSheet(shName)
-    ws.Cells.Clear
-
-    ws.Range("A1:B1").Value = Array("Станция", stationName)
+    ' --- Шапка листа суммы ---
+    ws.Range("A1:B1").Value = Array("Станция", stationName & IIf(evIdx > 1, " (событие " & evIdx & ")", ""))
     If Len(paropipeFilter) > 0 Then
         ws.Range("A2:B2").Value = Array("Паропровод", paropipeFilter)
     Else
-        ws.Range("A2:B2").Value = Array("Режим", "Суммарная нагрузка включённых генераторов (п. 4.2.10 МУ)")
+        ws.Range("A2:B2").Value = Array("Режим", IIf(isNeblok, "Суммарная нагрузка неблочной части (п. 4.2.10 МУ)", "Суммарная нагрузка (блочная компоновка - справочно)"))
     End If
     ws.Range("A3:B3").Value = Array("Старт (расч.)", wsRaw.Cells(startRow, timeCol).Value)
     If firstExceedRow > 0 Then
@@ -1883,9 +3219,10 @@ NextCfg:
         ws.Range("A4:B4").Value = Array("Выход за fнч", "")
     End If
     ws.Range("A5:B5").Value = Array("P0, МВт", p0)
-    ws.Range("A6:B6").Value = Array("Pтек, МВт", pNow)
-    ws.Range("A7:B7").Value = Array("Pтреб, МВт", preq)
-    ws.Range("A8:B8").Value = Array("Pфакт, МВт", pfact)
+    ws.Range("A6:B6").Value = Array("Pтек(tр), МВт", pNow)
+    ws.Range("A7:B7").Value = Array("Pтреб(tр), МВт", preq)
+    ws.Range("A8:B8").Value = Array("Pфакт(tр), МВт", pfact)
+    ws.Range("A9:B9").Value = Array("tр", wsRaw.Cells(trRow, timeCol).Value)
 
     ws.Cells(1, 4).Resize(1, 2).Value = Array("Pmax_сум, МВт", pMaxSum)
     ws.Cells(2, 4).Resize(1, 2).Value = Array("Pmin_сум, МВт", pMinSum)
@@ -1895,72 +3232,21 @@ NextCfg:
     ws.Cells(6, 4).Resize(1, 2).Value = Array("Ограничение", IIf(limited, "Да (" & limitType & ")", "нет"))
     ws.Cells(7, 4).Resize(1, 2).Value = Array("Генераторов в сумме", cnt)
     ws.Cells(8, 4).Resize(1, 2).Value = Array("Pном_сум (в работе), МВт", pNomSum)
-
-    ws.Range("A10:H10").Value = Array("Время", "Частота, Гц", "Pсум, МВт", "dPсум, МВт", "Pтреб_сум, МВт", _
-                                       "dPmax_сум", "dPmin_сум", "Дефицит_сум, МВт")
-    rowQ = 11
-    Dim dPmaxRel As Double, dPminRel As Double
-    Dim defMaxPct As Double, defSec As Double, tolSum As Double
-    Dim preqStep As Double, preqCap As Double, allowed As Double, have As Double, deficit As Double, dt As Double
-    dPmaxRel = pMaxSum - p0
-    dPminRel = pMinSum - p0
-    tolSum = 0.01 * pNomSum
-    defMaxPct = 0
-    defSec = 0
-    For r = startRow To endRow
-        ws.Cells(rowQ, 1).Value = wsRaw.Cells(r, timeCol).Value
-        ws.Cells(rowQ, 2).Value = wsRaw.Cells(r, freqCol).Value
-
-        pNow = SumPowerAtRow(wsRaw, pCols, cnt, r, st.WorkThresholdMW)
-        ws.Cells(rowQ, 3).Value = pNow
-        ws.Cells(rowQ, 4).Value = pNow - p0
-
-        preqStep = 0
-        tSecAgg = SecBetween(wsRaw.Cells(startRow, timeCol).Value, wsRaw.Cells(r, timeCol).Value)
-        For i = 1 To cnt
-            If inWork(i) Then
-                dfr = DeadbandDeviation(NzD(wsRaw.Cells(r, freqCol).Value, st.FNom) - st.FNom, fnchArr(i))
-                preqStep = preqStep + (-100# / sArr(i) * pnomArr(i) / st.FNom * DynamicKdByTime(etArr(i), tSecAgg) * dfr)
-            End If
-        Next i
-        ws.Cells(rowQ, 5).Value = preqStep
-        ws.Cells(rowQ, 6).Value = dPmaxRel
-        ws.Cells(rowQ, 7).Value = dPminRel
-
-        ' п. 4.2.14.1: дефицит суммарной первичной мощности по точке (допуск 1 %Pном_сум);
-        ' первые 15 с (переходный участок) не оцениваются - см. реакция РЧВ (п. 4.2.11)
-        deficit = 0
-        preqCap = preqStep
-        If preqCap > reservePlus Then preqCap = reservePlus
-        If preqCap < -reserveMinus Then preqCap = -reserveMinus
-        allowed = Abs(preqCap) - tolSum
-        If allowed > 0 And tSecAgg >= 15 Then
-            have = SgnNZ(preqCap) * (pNow - p0)
-            deficit = allowed - have
-            If deficit < 0 Then deficit = 0
-        End If
-        ws.Cells(rowQ, 8).Value = deficit
-        If deficit > 0 And pNomSum > 0 Then
-            If 100# * deficit / pNomSum > defMaxPct Then defMaxPct = 100# * deficit / pNomSum
-            If r < endRow Then
-                dt = SecBetween(wsRaw.Cells(r, timeCol).Value, wsRaw.Cells(r + 1, timeCol).Value)
-            Else
-                dt = 1
-            End If
-            If dt <= 0 Or dt > 60 Then dt = 1
-            defSec = defSec + dt
-        End If
-        rowQ = rowQ + 1
-    Next r
+    ws.Cells(9, 4).Resize(1, 2).Value = Array("tр, с / режим", Format(tSecAgg, "0") & " с / " & IIf(trQS, "квазиустановившийся", "переходный"))
 
     ' Результат по сумме станции
     sr.Station = stationName
     sr.Paroprovod = paropipeFilter
     sr.Count = cnt
+    sr.EventIdx = evIdx
+    sr.IsNeblok = isNeblok
     sr.StartTime = wsRaw.Cells(startRow, timeCol).Value
     If firstExceedRow > 0 Then sr.FirstExceedTime = wsRaw.Cells(firstExceedRow, timeCol).Value Else sr.FirstExceedTime = ""
+    sr.TrTime = wsRaw.Cells(trRow, timeCol).Value
+    sr.TrSec = tSecAgg
+    sr.TrQuasiSteady = trQS
     sr.P0 = p0
-    sr.PTek = SumPowerAtRow(wsRaw, pCols, cnt, endRow, st.WorkThresholdMW)
+    sr.PTek = pNow
     sr.Df = dF
     sr.PReq = preq
     sr.PReqOrig = preqOrig
@@ -1981,16 +3267,16 @@ NextCfg:
     sr.DeficitMaxPct = defMaxPct
     sr.DeficitSec = defSec
     sr.SheetName = shName
-    sr.ChartSheetName = StationChartSheetName(stationName, paropipeFilter)
+    sr.ChartSheetName = StationChartSheetName(stationName, paropipeFilter, evIdx)
     sr.Verdict = BuildStationVerdict(sr, st)
 
-    ' Блок вердикта на листе суммы (G1:H6)
+    ' Блок вердикта на листе суммы (G1:H7)
     ws.Cells(1, 7).Resize(1, 2).Value = Array("Колич. %", qpct)
-    ws.Cells(2, 7).Resize(1, 2).Value = Array("Колич. статус", IIf(limited, "Ограничен " & limitType, IIf(qpass, "ОК", "Нарушение")))
+    ws.Cells(2, 7).Resize(1, 2).Value = Array("Колич. статус", IIf(Not sr.QuantApplicable, "Н/П (п. 4.1.2)", IIf(limited, "Ограничен " & limitType, IIf(qpass, "ОК", "Нарушение"))))
     ws.Cells(3, 7).Resize(1, 2).Value = Array("Реакция 15 с (п. 4.2.11)", r15Status & " (dP15 = " & Format(dp15, "0.000") & " МВт)")
     ws.Cells(4, 7).Resize(1, 2).Value = Array("Дефицит (п. 4.2.14.1)", _
         IIf(defSec > 0, "до " & Format(defMaxPct, "0.00") & " %Pном_сум, " & Format(defSec, "0") & " с", "нет"))
-    ws.Cells(5, 7).Resize(1, 2).Value = Array("Kд(t) по типам", "см. профили Config AA:AI (по каждому генератору)")
+    ws.Cells(5, 7).Resize(1, 2).Value = Array("Применимость", sr.Applicability)
 
     ws.Columns("A:H").AutoFit
     ws.Cells(6, 7).Value = "Вывод"
@@ -1998,15 +3284,17 @@ NextCfg:
     ws.Cells(6, 7).Font.Bold = True
     If Left$(sr.Verdict, 9) = "НАРУШЕНИЕ" Then ws.Cells(6, 8).Font.Color = RGB(192, 0, 0) Else ws.Cells(6, 8).Font.Color = RGB(0, 97, 0)
 
-    ws.Range("A1:A8").NumberFormat = "@"
+    ws.Range("A1:A9").NumberFormat = "@"
     ws.Range("B1:B2").NumberFormat = "@"
     ws.Range("B3:B4").NumberFormat = "dd.mm.yyyy hh:mm:ss"
     ws.Range("B5:B8").NumberFormat = "0.000"
-    ws.Range("D1:D8").NumberFormat = "@"
+    ws.Range("B9").NumberFormat = "dd.mm.yyyy hh:mm:ss"
+    ws.Range("D1:D9").NumberFormat = "@"
     ws.Range("E1:E5").NumberFormat = "0.000"
     ws.Range("E6").NumberFormat = "@"
     ws.Range("E7").NumberFormat = "0"
     ws.Range("E8").NumberFormat = "0.000"
+    ws.Range("E9").NumberFormat = "@"
     ws.Range("G1:G6").NumberFormat = "@"
     ws.Range("H1").NumberFormat = "0.0"
     ws.Range("H2:H6").NumberFormat = "@"
@@ -2020,10 +3308,11 @@ NextCfg:
 
     ' Строка в Summary
     WriteSummaryStationRow wsSummary, outRow, sr
+    AddProtocolStation sr
     outRow = outRow + 1
 
-    ' п. 4.2.10: пометка в строках генераторов станции о статусе суммы
-    If Len(paropipeFilter) = 0 Then
+    ' п. 4.2.10: пометка в строках генераторов станции о статусе суммы (только неблочная часть, первое событие)
+    If Len(paropipeFilter) = 0 And isNeblok And evIdx = 1 Then
         AnnotateGeneratorRowsWithStationVerdict wsSummary, outRow - 1, stationName, (Left$(sr.Verdict, 2) = "ОК")
     End If
 End Sub
@@ -2055,25 +3344,48 @@ Private Function BuildStationVerdict(ByRef sr As TStationResult, ByRef st As TSe
     objName = "по сумме " & IIf(Len(sr.Paroprovod) > 0, "паропровода " & sr.Paroprovod & " ", "станции ")
     bad = ""
     remark = ""
-    If sr.Limited Then
-        remark = remark & "Pтреб_сум ограничен " & sr.LimitType & " (оценка по располагаемому резерву); "
-    ElseIf Not sr.QuantPass Then
-        bad = bad & "колич. критерий (" & Format(sr.QuantPct, "0") & " % от Pтреб_сум); "
-    End If
-    If sr.React15Status = "Нарушение" Then
-        bad = bad & "нет реакции РЧВ через 15 с (п. 4.2.11); "
-    End If
-    If sr.DeficitSec > 0 Then
-        remark = remark & "дефицит до " & Format(sr.DeficitMaxPct, "0.0") & " %Pном_сум в течение " & _
-                 Format(sr.DeficitSec, "0") & " с (п. 4.2.14.1); "
+
+    If Not sr.QuantApplicable And sr.React15Status <> "Нарушение" Then
+        txt = "НЕ ОЦЕНИВАЕТСЯ " & objName & ": " & sr.Applicability
+        If Not sr.IsNeblok Then txt = txt & ". Блочная компоновка: п. 4.2.10 МУ не применяется, оценка - по каждому генератору"
+        BuildStationVerdict = txt
+        Exit Function
     End If
 
-    If Len(bad) > 0 Then
-        txt = "НАРУШЕНИЕ " & objName & ": " & bad & _
-              "По п. 4.2.10 МУ требуется индивидуальная оценка каждого генератора - см. строки генераторов станции. "
+    If sr.QuantApplicable Then
+        If sr.Limited Then
+            remark = remark & "Pтреб_сум ограничен " & sr.LimitType & " (п. 4.2.8: оценка по располагаемому резерву); "
+        ElseIf Not sr.QuantPass Then
+            bad = bad & "Pфакт_сум(tр) = " & Format(sr.PFact, "0.00") & " МВт ниже Pтреб_сум(tр) = " & Format(sr.PReq, "0.00") & _
+                  " МВт (" & Format(sr.QuantPct, "0") & " %) - п. 4.2.14.1; "
+        End If
+        If sr.DeficitSec > 0 Then
+            remark = remark & "дефицит до " & Format(sr.DeficitMaxPct, "0.0") & " %Pном_сум в течение " & _
+                     Format(sr.DeficitSec, "0") & " с (п. 4.2.14.1); "
+        End If
     Else
-        txt = "ОК " & objName & "(" & sr.Count & " ген.): количественно и по реакции 15 с соответствует. " & _
-              "По п. 4.2.10 МУ индивидуальная оценка генераторов не требуется (строки генераторов приведены справочно). "
+        remark = remark & sr.Applicability & "; "
+    End If
+    If sr.React15Status = "Нарушение" Then
+        bad = bad & "отсутствует реакция РЧВ турбин через 15 с (dP15_сум = " & Format(sr.DP15, "0.00") & " МВт) - п. 4.2.11 / 4.4.2; "
+    End If
+
+    If sr.IsNeblok Then
+        If Len(bad) > 0 Then
+            txt = "НАРУШЕНИЕ " & objName & "(неблочная часть, " & sr.Count & " ген.): " & bad & _
+                  "По п. 4.2.10 МУ требуется индивидуальная оценка каждого генератора - см. строки генераторов станции. "
+        Else
+            txt = "ОК " & objName & "(неблочная часть, " & sr.Count & " ген.): количественно (п. 4.2.14.1) и по реакции 15 с (п. 4.2.11) соответствует. " & _
+                  "По п. 4.2.10 МУ индивидуальная оценка генераторов не требуется (строки генераторов приведены справочно). "
+        End If
+    Else
+        If Len(bad) > 0 Then
+            txt = "НАРУШЕНИЕ " & objName & "(" & sr.Count & " ген., блочная компоновка - справочно): " & bad & _
+                  "Нормативная оценка - по каждому генератору (п. 4.2.10 применяется к неблочной части ТЭС). "
+        Else
+            txt = "ОК " & objName & "(" & sr.Count & " ген., блочная компоновка - справочно): количественно и по реакции 15 с соответствует. " & _
+                  "Нормативная оценка - по каждому генератору (п. 4.2.10 применяется к неблочной части ТЭС). "
+        End If
     End If
     If Len(remark) > 0 Then txt = txt & "Замечания: " & remark
     txt = Trim$(txt)
@@ -2081,15 +3393,31 @@ Private Function BuildStationVerdict(ByRef sr As TStationResult, ByRef st As TSe
     BuildStationVerdict = txt
 End Function
 
-Private Function StationChartSheetName(ByVal stationName As String, ByVal paropipeFilter As String) As String
-    Dim suffix As String, dataName As String, chartName As String
+Private Function StationSheetName(ByVal stationName As String, ByVal paropipeFilter As String, ByVal evIdx As Long) As String
+    Dim suffix As String, base As String
     If Len(paropipeFilter) > 0 Then
         suffix = "_Сумма_" & paropipeFilter
     Else
         suffix = "_Сумма"
     End If
-    dataName = MakeSheetName(stationName & suffix)
-    chartName = MakeSheetName(stationName & suffix & CHART_SUFFIX)
+    suffix = suffix & EventSuffix(evIdx)
+    base = stationName
+    If Len(base & suffix) > 31 Then base = Left$(base, 31 - Len(suffix))
+    StationSheetName = MakeSheetName(base & suffix)
+End Function
+
+Private Function StationChartSheetName(ByVal stationName As String, ByVal paropipeFilter As String, ByVal evIdx As Long) As String
+    Dim suffix As String, dataName As String, chartName As String, base As String
+    If Len(paropipeFilter) > 0 Then
+        suffix = "_Сумма_" & paropipeFilter
+    Else
+        suffix = "_Сумма"
+    End If
+    suffix = suffix & EventSuffix(evIdx)
+    dataName = StationSheetName(stationName, paropipeFilter, evIdx)
+    base = stationName
+    If Len(base & suffix & CHART_SUFFIX) > 31 Then base = Left$(base, 31 - Len(suffix) - Len(CHART_SUFFIX))
+    chartName = MakeSheetName(base & suffix & CHART_SUFFIX)
     If StrComp(chartName, dataName, vbTextCompare) = 0 Then
         chartName = Left$(dataName, 28) & "_Гр"
     End If
@@ -2103,15 +3431,10 @@ Private Sub WriteStationChartSheet(ByVal stationName As String, ByVal paropipeFi
     Dim dataName As String, chartName As String
     Dim chartObj As ChartObject
     Dim endRow As Long, startRow As Long
-    Dim suffix As String, ySpan As Double
+    Dim ySpan As Double
 
-    If Len(paropipeFilter) > 0 Then
-        suffix = "_Сумма_" & paropipeFilter
-    Else
-        suffix = "_Сумма"
-    End If
-    dataName = MakeSheetName(stationName & suffix)
-    chartName = StationChartSheetName(stationName, paropipeFilter)
+    dataName = sr.SheetName
+    chartName = sr.ChartSheetName
 
     Set wsData = ThisWorkbook.Worksheets(dataName)
     Set wsChart = EnsureSheet(chartName)
@@ -2120,7 +3443,8 @@ Private Sub WriteStationChartSheet(ByVal stationName As String, ByVal paropipeFi
         wsChart.ChartObjects(1).Delete
     Loop
 
-    wsChart.Range("A1").Value = "График ОПРЧ (сумма): " & stationName & IIf(Len(paropipeFilter) > 0, " / " & paropipeFilter, "")
+    wsChart.Range("A1").Value = "График ОПРЧ (сумма): " & stationName & IIf(Len(paropipeFilter) > 0, " / " & paropipeFilter, "") & _
+                                IIf(sr.EventIdx > 1, " (событие " & sr.EventIdx & ")", "")
     wsChart.Range("A1").Font.Bold = True
     wsChart.Range("A1").Font.Size = 14
 
@@ -2139,30 +3463,40 @@ Private Sub WriteStationChartSheet(ByVal stationName As String, ByVal paropipeFi
     wsChart.Range("B5").Value = Format(sr.PMaxSum, "0.0") & " / " & Format(sr.PMinSum, "0.0") & _
                                 " (резерв +" & Format(sr.ReservePlus, "0.0") & " / -" & Format(sr.ReserveMinus, "0.0") & ")"
     wsChart.Range("D5").Value = "Генераторов:"
-    wsChart.Range("E5").Value = CStr(sr.Count)
-    wsChart.Range("A6").Value = "Вывод:"
-    wsChart.Range("B6").Value = sr.Verdict
-    wsChart.Range("A3:A6").Font.Bold = True
+    wsChart.Range("E5").Value = CStr(sr.Count) & IIf(sr.IsNeblok, " (неблочная часть)", " (блочная компоновка)")
+    wsChart.Range("A6").Value = "tр / применимость:"
+    wsChart.Range("B6").Value = IIf(IsDate(sr.TrTime), Format(sr.TrTime, "hh:mm:ss"), "-") & " (" & Format(sr.TrSec, "0") & " с, " & _
+                                IIf(sr.TrQuasiSteady, "квазиуст.", "переходный") & "); " & sr.Applicability
+    wsChart.Range("A7").Value = "Вывод:"
+    wsChart.Range("B7").Value = sr.Verdict
+    wsChart.Range("A3:A7").Font.Bold = True
     wsChart.Range("D3:D5").Font.Bold = True
-    wsChart.Range("A3:E6").NumberFormat = "@"
+    wsChart.Range("A3:E7").NumberFormat = "@"
     If sr.Limited Then
         wsChart.Range("B3").Font.Color = RGB(156, 87, 0)
-    ElseIf Not sr.QuantPass Then
+    ElseIf Not sr.QuantPass And sr.QuantApplicable Then
         wsChart.Range("B3").Font.Color = RGB(192, 0, 0)
     End If
     If sr.React15Status = "Нарушение" Then wsChart.Range("B4").Font.Color = RGB(192, 0, 0)
-    If Left$(sr.Verdict, 9) = "НАРУШЕНИЕ" Then wsChart.Range("B6").Font.Color = RGB(192, 0, 0) Else wsChart.Range("B6").Font.Color = RGB(0, 97, 0)
+    If Left$(sr.Verdict, 9) = "НАРУШЕНИЕ" Then
+        wsChart.Range("B7").Font.Color = RGB(192, 0, 0)
+    ElseIf Left$(sr.Verdict, 2) = "ОК" Then
+        wsChart.Range("B7").Font.Color = RGB(0, 97, 0)
+    Else
+        wsChart.Range("B7").Font.Color = RGB(89, 89, 89)
+    End If
 
     startRow = 11
     If lastDataRow < startRow Then Exit Sub
     endRow = FindChartEndRow(wsData, startRow, lastDataRow, wsData.Cells(startRow, 1).Value, st.ChartIntervalSec)
     If endRow < startRow Then endRow = lastDataRow
 
-    Set chartObj = wsChart.ChartObjects.Add(10, 110, 1020, 520)
+    Set chartObj = wsChart.ChartObjects.Add(10, 130, 1020, 520)
     With chartObj.Chart
         .ChartType = xlLine
         .HasTitle = True
-        .ChartTitle.Text = "Суммарный мониторинг ОПРЧ: " & stationName & IIf(Len(paropipeFilter) > 0, " / " & paropipeFilter, "")
+        .ChartTitle.Text = "Суммарный мониторинг ОПРЧ: " & stationName & IIf(Len(paropipeFilter) > 0, " / " & paropipeFilter, "") & _
+                           IIf(sr.EventIdx > 1, " (событие " & sr.EventIdx & ")", "")
         On Error Resume Next
         .Axes(xlCategory).CategoryType = xlCategoryScale
         On Error GoTo 0
@@ -2183,6 +3517,7 @@ Private Sub WriteStationChartSheet(ByVal stationName As String, ByVal paropipeFi
         .MaximumScale = st.FNom + ySpan
     End With
     On Error GoTo 0
+    ApplyChartAxesFormat chartObj.Chart, wsData, startRow, endRow, "dPсум, МВт", "f, Гц"
 End Sub
 
 ' ==========================================================
@@ -2216,9 +3551,21 @@ Private Sub WriteSummaryRow(ByVal ws As Worksheet, ByVal r As Long, ByRef g As T
     overshootStr = IIf(res.Overshoot, "Да", "")
 
     If res.React15Status = "Нарушение" Then note = Trim$(note & "; " & res.React15Note)
+    If g.ForcedNoRM Then note = Trim$(note & "; без РМ: принято S = " & Format(g.SPct, "0.0") & " %, fнч = " & Format(g.Fnch, "0.000") & " Гц (режим «Авария»)")
     If Len(note) > 0 And Left$(note, 2) = "; " Then note = Mid$(note, 3)
+    If Not res.QuantApplicable Then quantStatusStr = "Н/П"
 
-    ws.Cells(r, 1).Resize(1, 40).Value = Array( _
+    Dim qualStatusStr As String, qualT5Str As String, qualT10Str As String, qualStStr As String
+    If res.QualApplicable Then
+        qualStatusStr = IIf(res.QualPass, "ОК", "Нарушение")
+        qualT5Str = IIf(res.QualT5Pass, "ОК", "Нарушение")
+        qualT10Str = IIf(res.QualT10Pass, "ОК", "Нарушение")
+        qualStStr = IIf(res.QualSteadyPass, "ОК", "Нарушение")
+    Else
+        qualStatusStr = "Н/П": qualT5Str = "Н/П": qualT10Str = "Н/П": qualStStr = "Н/П"
+    End If
+
+    ws.Cells(r, 1).Resize(1, 52).Value = Array( _
         g.Station, g.Generator, g.EquipType, _
         res.StartTime, res.FirstExceedTime, _
         res.P0, res.PTek, res.PsteadyAvg, _
@@ -2227,28 +3574,34 @@ Private Sub WriteSummaryRow(ByVal ws As Worksheet, ByVal r As Long, ByRef g As T
         Round(res.AmplPctPnom, 2), res.AmplitudeTag, _
         res.QuantPct, quantStatusStr, overshootStr, _
         res.TransientType, res.NumExtrema, _
-        IIf(res.QualPass, "ОК", "Нарушение"), _
-        IIf(res.QualT5Pass, "ОК", "Нарушение"), _
-        IIf(res.QualT10Pass, "ОК", "Нарушение"), _
-        IIf(res.QualSteadyPass, "ОК", "Нарушение"), _
+        qualStatusStr, qualT5Str, qualT10Str, qualStStr, _
         res.QualFailedList, _
         FormatSecOrNA(res.T5FactSec), FormatSecOrNA(res.T10FactSec), _
-        GeneratorSheetName(g), GeneratorChartSheetName(g), _
+        GeneratorSheetName(g, res.EventIdx), GeneratorChartSheetName(g, res.EventIdx), _
         res.PMaxEff, res.PMinEff, res.ReservePlus, res.ReserveMinus, _
         res.PReqOrig, limitStr, _
         note, _
         res.React15Status, Round(res.DP15, 3), Round(res.DeficitMaxPct, 2), Round(res.DeficitSec, 0), _
-        res.Verdict _
+        res.Verdict, _
+        res.EventIdx, res.Applicability, res.TrTime, Round(res.TrSec, 0), _
+        IIf(res.TrQuasiSteady, "Квазиуст.", "Переходный"), _
+        Round(res.PReqRef, 3), Round(res.PFactRef, 3), _
+        IIf(res.OscViolation, "Нарушение: " & res.OscNote, IIf(Len(res.OscNote) > 0, res.OscNote, "нет")), _
+        IIf(Len(res.TelemetryNote) > 0, res.TelemetryNote, "ОК"), _
+        IIf(Len(res.ReactionType) > 0, res.ReactionType, "-"), _
+        IIf(res.H15 > -900, Round(res.H15, 3), ""), _
+        IIf(Len(res.QualClauseVerdict) > 0, res.QualClauseVerdict, IIf(res.QualApplicable, "", "Н/П (п. 4.1.3)")) _
     )
 End Sub
 
 Private Sub WriteSummaryInvalid(ByVal ws As Worksheet, ByVal r As Long, ByRef g As TGenCfg)
-    ws.Cells(r, 1).Resize(1, 40).Value = Array( _
+    ws.Cells(r, 1).Resize(1, 52).Value = Array( _
         g.Station, g.Generator, g.EquipType, "", "", "", "", "", "", "", "", "", "", "", "", _
         "Нарушение", "", "", 0, "Н/Д", "Н/Д", "Н/Д", "Н/Д", "", "", "", "Config", "", _
         "", "", "", "", "", "", _
         "Не заполнен обязательный параметр config", _
-        "Н/Д", "", "", "", "НАРУШЕНИЕ: не заполнены обязательные параметры Config" _
+        "Н/Д", "", "", "", "НАРУШЕНИЕ: не заполнены обязательные параметры Config", _
+        "", "", "", "", "", "", "", "", "", "", "", "" _
     )
 End Sub
 
@@ -2269,8 +3622,10 @@ Private Sub WriteSummaryStationRow(ByVal ws As Worksheet, ByVal r As Long, ByRef
     Dim amplVal As Variant
     If sr.PNomSum > 0 Then amplVal = Round(100# * Abs(sr.PReqOrig) / sr.PNomSum, 2) Else amplVal = ""
 
-    ws.Cells(r, 1).Resize(1, 40).Value = Array( _
-        sr.Station, genLabel, "Сумма станции (" & sr.Count & " ген.)", _
+    If Not sr.QuantApplicable Then quantStatusStr = "Н/П"
+
+    ws.Cells(r, 1).Resize(1, 52).Value = Array( _
+        sr.Station, genLabel, "Сумма станции (" & sr.Count & " ген., " & IIf(sr.IsNeblok, "неблок", "блок") & ")", _
         sr.StartTime, sr.FirstExceedTime, _
         sr.P0, sr.PTek, "", _
         sr.Df, "", _
@@ -2283,11 +3638,13 @@ Private Sub WriteSummaryStationRow(ByVal ws As Worksheet, ByVal r As Long, ByRef
         sr.SheetName, sr.ChartSheetName, _
         sr.PMaxSum, sr.PMinSum, sr.ReservePlus, sr.ReserveMinus, _
         sr.PReqOrig, limitStr, _
-        IIf(sr.React15Status = "Нарушение", sr.React15Note, "Оценка по суммарной мощности станции (п. 4.2.10 МУ)"), _
+        IIf(sr.React15Status = "Нарушение", sr.React15Note, IIf(sr.IsNeblok, "Оценка по суммарной мощности неблочной части (п. 4.2.10 МУ)", "Сумма по блочной станции - справочно")), _
         sr.React15Status, Round(sr.DP15, 3), Round(sr.DeficitMaxPct, 2), Round(sr.DeficitSec, 0), _
-        sr.Verdict _
+        sr.Verdict, _
+        sr.EventIdx, sr.Applicability, sr.TrTime, Round(sr.TrSec, 0), IIf(sr.TrQuasiSteady, "Квазиуст.", "Переходный"), _
+        "", "", "", "", "", "", "" _
     )
-    ws.Range(ws.Cells(r, 1), ws.Cells(r, 40)).Font.Bold = True
+    ws.Range(ws.Cells(r, 1), ws.Cells(r, 52)).Font.Bold = True
 End Sub
 
 Private Sub ApplySummaryConditionalFormat(ByVal ws As Worksheet)
@@ -2295,7 +3652,7 @@ Private Sub ApplySummaryConditionalFormat(ByVal ws As Worksheet)
     Dim rng As Range
     lastRow = ws.Cells(ws.Rows.Count, 1).End(xlUp).Row
     If lastRow < 2 Then Exit Sub
-    ws.Range("A2:AN" & lastRow).Interior.Pattern = xlNone
+    ws.Range("A2:AZ" & lastRow).Interior.Pattern = xlNone
 
     ' Строки сумм станций (B начинается с "СУММА") - подсветка A:C
     Dim rr As Long
@@ -2312,7 +3669,36 @@ Private Sub ApplySummaryConditionalFormat(ByVal ws As Worksheet)
     ApplyStatusCF ws, ws.Range("V2:V" & lastRow), "ОК", "Нарушение"
     ' Реакция 15 с (AJ) и Вывод (AN)
     ApplyStatusCF ws, ws.Range("AJ2:AJ" & lastRow), "ОК", "Нарушение"
-    ApplyStatusCF ws, ws.Range("AN2:AN" & lastRow), "ОК", "Нарушение"
+    ApplyStatusCF ws, ws.Range("AN2:AN" & lastRow), "ОК", "НАРУШЕНИЕ"
+    ' Колебания (AV), Кач. вывод (AZ): "Нарушение" красным; Качество ТИ (AW): "сомнительны" оранжевым;
+    ' Тип реакции (AX): «адекватная» зелёным, прочие оранжевым; Применимость (AP): "не удовлетворяет"/"не применяется" серым
+    ApplyStatusCF ws, ws.Range("AV2:AV" & lastRow), "нет", "Нарушение"
+    ApplyStatusCF ws, ws.Range("AZ2:AZ" & lastRow), "выполнены", "НАРУШЕНИЕ"
+    Set rng = ws.Range("AW2:AW" & lastRow)
+    rng.FormatConditions.Delete
+    With rng.FormatConditions.Add(Type:=xlTextString, String:="сомнительны", TextOperator:=xlContains)
+        .Interior.Color = RGB(255, 235, 156)
+        .Font.Color = RGB(156, 87, 0)
+    End With
+    Set rng = ws.Range("AX2:AX" & lastRow)
+    rng.FormatConditions.Delete
+    With rng.FormatConditions.Add(Type:=xlTextString, String:="адекватная", TextOperator:=xlContains)
+        .Interior.Color = RGB(198, 239, 206)
+        .Font.Color = RGB(0, 97, 0)
+    End With
+    With rng.FormatConditions.Add(Type:=xlTextString, String:=" - «", TextOperator:=xlContains)
+        .Interior.Color = RGB(255, 235, 156)
+        .Font.Color = RGB(156, 87, 0)
+    End With
+    Set rng = ws.Range("AP2:AP" & lastRow)
+    rng.FormatConditions.Delete
+    With rng.FormatConditions.Add(Type:=xlTextString, String:="не удовлетворяет", TextOperator:=xlContains)
+        .Interior.Color = RGB(217, 217, 217)
+        .Font.Color = RGB(89, 89, 89)
+    End With
+    With rng.FormatConditions.Add(Type:=xlTextString, String:="Только", TextOperator:=xlContains)
+        .Interior.Color = RGB(255, 235, 156)
+    End With
     ' Дефицит (AL): любое значение > 0 - оранжевым (замечание)
     Set rng = ws.Range("AL2:AL" & lastRow)
     rng.FormatConditions.Delete
@@ -2399,8 +3785,21 @@ Private Sub ApplySummaryConditionalFormat(ByVal ws As Worksheet)
         .ColorScaleCriteria(3).FormatColor.Color = RGB(248, 105, 107)
     End With
 
-    ws.Range("A1:AN1").Font.Bold = True
-    ws.Range("A1:AN1").Interior.Color = RGB(217, 225, 242)
+    ' Вывод (AN): "НЕ ОЦЕНИВАЕТСЯ" серым
+    Set rng = ws.Range("AN2:AN" & lastRow)
+    With rng.FormatConditions.Add(Type:=xlTextString, String:="НЕ ОЦЕНИВАЕТСЯ", TextOperator:=xlContains)
+        .Interior.Color = RGB(217, 217, 217)
+        .Font.Color = RGB(89, 89, 89)
+    End With
+    ' Колич. статус (P): "Н/П" серым
+    Set rng = ws.Range("P2:P" & lastRow)
+    With rng.FormatConditions.Add(Type:=xlTextString, String:="Н/П", TextOperator:=xlContains)
+        .Interior.Color = RGB(217, 217, 217)
+        .Font.Color = RGB(89, 89, 89)
+    End With
+
+    ws.Range("A1:AZ1").Font.Bold = True
+    ws.Range("A1:AZ1").Interior.Color = RGB(217, 225, 242)
 End Sub
 
 Private Sub ApplyStatusCF(ByVal ws As Worksheet, ByVal rng As Range, ByVal okText As String, ByVal badText As String)
@@ -2417,7 +3816,7 @@ End Sub
 
 Private Sub WriteVersionStamp(ByVal wsSummary As Worksheet, ByVal wsRaw As Worksheet, ByVal t0Run As Double)
     Dim col As Long
-    col = 42   ' колонка AP - правее данных Summary (после AN)
+    col = 54   ' колонка BB - правее данных Summary (после AZ)
     wsSummary.Cells(1, col).Value = "Мониторинг ОПРЧ"
     wsSummary.Cells(2, col).Value = "Версия"
     wsSummary.Cells(2, col + 1).Value = OPRCH_VERSION
@@ -2510,8 +3909,12 @@ Private Sub ValidateInputs(ByVal wsRaw As Worksheet, ByVal wsCfg As Worksheet, B
     Set stationParopipe = CreateObject("Scripting.Dictionary")
     For r = 2 To cfgLast
         If Len(Trim$(CStr(wsCfg.Cells(r, 2).Value))) = 0 Then GoTo NX
-        g = ReadGenCfg(wsCfg, r)
+        g = ReadGenCfgEff(wsCfg, r, st)
         If Not g.Enabled Then GoTo NX
+        If g.ForcedNoRM Then AppendLog "INFO", g.Station & "/" & g.Generator, _
+            "Без РМ, режим «Авария»: принято S = " & NO_RM_S_PCT & " %, fнч = " & NO_RM_FNCH_HZ & " Гц (в Config S = " & g.SPctCfg & " %, fнч = " & g.FnchCfg & " Гц)"
+        If Not g.HasRM And Not st.IsEmergency Then AppendLog "INFO", g.Station & "/" & g.Generator, _
+            "Без РМ, режим «Испытание»: используются фактические S = " & g.SPct & " %, fнч = " & g.Fnch & " Гц из Config"
         If g.PNom <= 0 Then AppendLog "WARN", g.Station & "/" & g.Generator, "Pном <= 0"
         If g.SPct <= 1 Or g.SPct > 15 Then AppendLog "WARN", g.Station & "/" & g.Generator, "S вне [1..15] %: " & g.SPct
         If g.Fnch < 0 Or g.Fnch > 0.5 Then AppendLog "WARN", g.Station & "/" & g.Generator, "fнч вне [0..0.5] Гц: " & g.Fnch
@@ -2541,6 +3944,8 @@ NX:
     If st.SteadyWindowSec < 10 Then AppendLog "WARN", "Settings", "Окно установившегося < 10 с: " & st.SteadyWindowSec
     If st.React15ThrPct > 2 Then AppendLog "WARN", "Settings", "Порог реакции 15 с > 2 %Pном (" & st.React15ThrPct & ") - п. 4.2.11 требует лишь наличия реакции"
     If st.AvgWindowSec > 30 Then AppendLog "WARN", "Settings", "Окно усреднения P0/Pтек > 30 с: " & st.AvgWindowSec
+    If st.MaxReqPct > 0 And st.MaxReqPct < 10 Then AppendLog "WARN", "Settings", "Ограничение Pтреб < 10 %Pном (" & st.MaxReqPct & ") - по Приложению к МУ принимается 10 %"
+    If st.MaxEventSec < st.QuantIntervalSec Then AppendLog "WARN", "Settings", "Макс. окно события (" & st.MaxEventSec & " с) меньше контрольного интервала (" & st.QuantIntervalSec & " с)"
 
     ' Справка по профилям Kд(t): значения в контрольных точках 15 с и колич. интервала
     If Not m_KdProfiles Is Nothing Then
@@ -2560,13 +3965,14 @@ End Sub
 
 Private Function ReadSettings(ByVal wsCfg As Worksheet) As TSettings
     Dim st As TSettings
-    Dim valCol As Long
-    ' В 1.4.0 глобальные настройки перенесены в колонки W/X (23/24),
-    ' чтобы освободить T/U для Pmax/Pmin у генераторов.
-    ' Старые книги (до 1.3.x) продолжаем читать по адресу T/U (20/21),
-    ' если W пустой.
+    Dim valCol As Long, modeTxt As String
+    ' Глобальные настройки - в колонках W/X (23/24). Совместимость с книгами
+    ' до 1.3.x (настройки в T/U) снята в 1.7.0: колонки U/V заняты признаками
+    ' «РМ» и «Компоновка». Для старых книг запустите SetupOPRCHTemplate.
     valCol = 24
-    If Trim$(CStr(wsCfg.Cells(2, 23).Value)) = "" Then valCol = 21
+    If Trim$(CStr(wsCfg.Cells(2, 23).Value)) = "" Then
+        Err.Raise vbObjectError + 2003, , "В Config не найдены глобальные настройки (W2:X16). Запустите SetupOPRCHTemplate или заполните колонки W/X."
+    End If
     st.FNom = NzD(wsCfg.Cells(2, valCol).Value, 50#)
     st.AutoStart = (NzD(wsCfg.Cells(4, valCol).Value, 1) <> 0)
     st.QuantIntervalSec = NzD(wsCfg.Cells(5, valCol).Value, 82#)
@@ -2579,6 +3985,22 @@ Private Function ReadSettings(ByVal wsCfg As Worksheet) As TSettings
     st.AvgWindowSec = NzD(wsCfg.Cells(12, valCol).Value, 0#)
     If st.React15ThrPct < 0 Then st.React15ThrPct = 0
     If st.AvgWindowSec < 0 Then st.AvgWindowSec = 0
+    ' 1.7.0: режим, окно события, число событий, ограничение Pтреб
+    modeTxt = UCase$(Trim$(CStr(wsCfg.Cells(13, valCol).Value)))
+    If Len(modeTxt) = 0 Then modeTxt = "АВАРИЯ"
+    If Left$(modeTxt, 4) = "ИСПЫ" Or Left$(modeTxt, 4) = "ТЕСТ" Or Left$(modeTxt, 4) = "TEST" Then
+        st.Mode = "Испытание"
+        st.IsEmergency = False
+    Else
+        st.Mode = "Авария"
+        st.IsEmergency = True
+    End If
+    st.MaxEventSec = NzD(wsCfg.Cells(14, valCol).Value, 600#)
+    If st.MaxEventSec < 60 Then st.MaxEventSec = 60
+    st.MaxEvents = CLng(NzD(wsCfg.Cells(15, valCol).Value, 3#))
+    If st.MaxEvents < 1 Then st.MaxEvents = 1
+    st.MaxReqPct = NzD(wsCfg.Cells(16, valCol).Value, 10#)
+    If st.MaxReqPct < 0 Then st.MaxReqPct = 0
     If IsDate(wsCfg.Cells(3, valCol).Value) Then
         st.EventStart = CDate(wsCfg.Cells(3, valCol).Value)
     Else
@@ -2621,6 +4043,19 @@ Private Function ReadGenCfg(ByVal ws As Worksheet, ByVal r As Long) As TGenCfg
     If g.PMax <= 0 Then g.PMax = g.PNom
     If g.PMin < 0 Then g.PMin = 0
     If g.PMax < g.PMin Then g.PMax = g.PMin
+    ' РМ (U): пусто = 1 (оснащён); Компоновка (V): пусто = по типу оборудования
+    g.HasRM = (NzD(ws.Cells(r, 21).Value, 1) <> 0)
+    g.Layout = LCase$(Trim$(CStr(ws.Cells(r, 22).Value)))
+    If Len(g.Layout) = 0 Then
+        If InStr(UCase$(g.EquipType), "НЕБЛОК") > 0 Then g.Layout = "неблок" Else g.Layout = "блок"
+    ElseIf InStr(g.Layout, "неблок") > 0 Or InStr(g.Layout, "общ") > 0 Or InStr(g.Layout, "попереч") > 0 Then
+        g.Layout = "неблок"
+    Else
+        g.Layout = "блок"
+    End If
+    g.SPctCfg = g.SPct
+    g.FnchCfg = g.Fnch
+    g.ForcedNoRM = False
 
     pr = GetPreset(g.EquipType)
     If g.T5Sec <= 0 Then g.T5Sec = pr.T5Sec
@@ -2670,8 +4105,9 @@ Private Function GetPreset(ByVal equipType As String) As TGenCfg
         g.T10Sec = 300
     ElseIf InStr(et, "ПТУ_НЕБЛОК") > 0 Or InStr(et, "НЕБЛОК") > 0 Then
         g.T10Sec = 420
-    ElseIf InStr(et, "ПТУ") > 0 Then
-        g.T10Sec = 420
+    ElseIf InStr(et, "ПТУ") > 0 Or InStr(et, "ПСУ") > 0 Then
+        ' короткое имя «ПТУ»/«ПСУ» без суффикса: ориентир блочной компоновки (5 мин)
+        g.T10Sec = 300
     End If
     GetPreset = g
 End Function
@@ -2684,51 +4120,6 @@ End Function
 ' ==========================================================
 ' Алгоритмические помощники
 ' ==========================================================
-
-Private Function ResolveStartRow(ByVal wsRaw As Worksheet, ByVal timeCol As Long, ByVal freqCol As Long, _
-                                 ByRef st As TSettings, ByVal fnch As Double, _
-                                 ByRef firstExceedRow As Long) As Long
-    Dim lastR As Long, r As Long
-    Dim prevAbs As Double, curAbs As Double
-    Dim bestRow As Long, bestAbs As Double, val As Double, t As Double, dt As Double
-
-    firstExceedRow = 0
-    lastR = LastUsedRow(wsRaw)
-    If lastR < 3 Then ResolveStartRow = 2: Exit Function
-
-    If Not st.AutoStart And st.EventStart > 0 Then
-        bestRow = 2: bestAbs = 1E+99
-        For r = 2 To lastR
-            If IsDate(wsRaw.Cells(r, timeCol).Value) Then
-                t = CDbl(CDate(wsRaw.Cells(r, timeCol).Value))
-                dt = Abs(CDbl(t - st.EventStart))
-                If dt < bestAbs Then bestAbs = dt: bestRow = r
-            End If
-        Next r
-        ResolveStartRow = bestRow
-        firstExceedRow = bestRow
-        Exit Function
-    End If
-
-    prevAbs = Abs(NzD(wsRaw.Cells(2, freqCol).Value, st.FNom) - st.FNom)
-    For r = 3 To lastR
-        curAbs = Abs(NzD(wsRaw.Cells(r, freqCol).Value, st.FNom) - st.FNom)
-        If prevAbs <= fnch And curAbs > fnch Then
-            firstExceedRow = r
-            ResolveStartRow = r - 1
-            Exit Function
-        End If
-        prevAbs = curAbs
-    Next r
-
-    bestRow = 2: bestAbs = -1
-    For r = 2 To lastR
-        val = NzD(wsRaw.Cells(r, freqCol).Value, st.FNom) - st.FNom
-        If Abs(val) > bestAbs Then bestAbs = Abs(val): bestRow = r
-    Next r
-    ResolveStartRow = bestRow
-    firstExceedRow = bestRow
-End Function
 
 Private Function RowByTimeOffset(ByVal wsRaw As Worksheet, ByVal timeCol As Long, ByVal startRow As Long, ByVal offsetSec As Double) As Long
     Dim t0 As Double, tTarget As Double
@@ -2881,10 +4272,34 @@ Private Function ClampKd(ByVal kdVal As Double) As Double
     If ClampKd > 1# Then ClampKd = 1#
 End Function
 
+' Сопоставить Тип_оборудования с ключом профиля AA:AI (допускаются короткие имена ПТУ/ПСУ/ГТУ).
+Private Function ResolveKdKey(ByVal equipType As String) As String
+    Dim key As String
+    key = UCase$(Trim$(equipType))
+    ResolveKdKey = key
+    If m_KdProfiles Is Nothing Then Exit Function
+    If m_KdProfiles.Exists(key) Then Exit Function
+    If InStr(key, "ГПА") > 0 And m_KdProfiles.Exists("ГПА") Then ResolveKdKey = "ГПА": Exit Function
+    If InStr(key, "ГТУ") > 0 And m_KdProfiles.Exists("ГТУ") Then ResolveKdKey = "ГТУ": Exit Function
+    If (InStr(key, "ПГУ") > 0 And (InStr(key, "СБРОС") > 0 Or InStr(key, "ПАРАЛ") > 0)) And m_KdProfiles.Exists("ПГУ_СБРОСН") Then
+        ResolveKdKey = "ПГУ_СБРОСН": Exit Function
+    End If
+    If InStr(key, "ПГУ") > 0 And m_KdProfiles.Exists("ПГУ_УТИЛ") Then ResolveKdKey = "ПГУ_УТИЛ": Exit Function
+    If (InStr(key, "НЕБЛОК") > 0 Or InStr(key, "ОБЩ") > 0) And m_KdProfiles.Exists("ПТУ_НЕБЛОК") Then
+        ResolveKdKey = "ПТУ_НЕБЛОК": Exit Function
+    End If
+    If (InStr(key, "УГОЛЬ") > 0 Or InStr(key, "ПЫЛЕУГ") > 0) And m_KdProfiles.Exists("ПТУ_БЛОК_УГОЛЬ") Then
+        ResolveKdKey = "ПТУ_БЛОК_УГОЛЬ": Exit Function
+    End If
+    If (InStr(key, "ПТУ") > 0 Or InStr(key, "ПСУ") > 0 Or InStr(key, "БЛОК") > 0) And m_KdProfiles.Exists("ПТУ_БЛОК") Then
+        ResolveKdKey = "ПТУ_БЛОК": Exit Function
+    End If
+End Function
+
 Private Function DynamicKdByTime(ByVal equipType As String, ByVal tSec As Double) As Double
     Dim prof As Variant, key As String
-    key = UCase$(Trim$(equipType))
     If m_KdProfiles Is Nothing Then Err.Raise vbObjectError + 2401, , "Профили Kд(t) не загружены."
+    key = ResolveKdKey(equipType)
     If Not m_KdProfiles.Exists(key) Then
         Err.Raise vbObjectError + 2402, , "Для типа '" & equipType & "' не задан профиль Kд(t) в Config (AA:AI)."
     End If
@@ -2894,12 +4309,12 @@ End Function
 
 Private Function KdProfileText(ByVal equipType As String) As String
     Dim prof As Variant, key As String, src As String
-    key = UCase$(Trim$(equipType))
     src = "Config"
     If m_KdProfiles Is Nothing Then
         KdProfileText = "Config: профили Kд(t) не загружены"
         Exit Function
     End If
+    key = ResolveKdKey(equipType)
     If Not m_KdProfiles.Exists(key) Then
         KdProfileText = "Config: профиль для типа '" & equipType & "' не задан"
         Exit Function
@@ -2999,6 +4414,9 @@ Private Function StationMatch(ByVal a As String, ByVal b As String) As Boolean
     If InStr(na, "ВОРКУТ") > 0 And InStr(nb, "ВОРКУТ") > 0 Then StationMatch = True: Exit Function
     If InStr(na, "СОСНОГОР") > 0 And InStr(nb, "СОСНОГОР") > 0 Then StationMatch = True: Exit Function
     If InStr(na, "СЛПК") > 0 And InStr(nb, "СЛПК") > 0 Then StationMatch = True: Exit Function
+    If InStr(na, "ПЕЧОР") > 0 And InStr(nb, "ПЕЧОР") > 0 Then StationMatch = True: Exit Function
+    If InStr(na, "УСИНС") > 0 And InStr(nb, "УСИНС") > 0 Then StationMatch = True: Exit Function
+    If InStr(na, "ЯРЕГ") > 0 And InStr(nb, "ЯРЕГ") > 0 Then StationMatch = True: Exit Function
     StationMatch = (na = nb)
 End Function
 
@@ -3020,17 +4438,27 @@ Private Function FormatSecOrNA(ByVal secVal As Double) As String
     If secVal < 0 Then FormatSecOrNA = "н/д" Else FormatSecOrNA = Format(secVal, "0.0")
 End Function
 
-Private Function GeneratorSheetName(ByRef g As TGenCfg) As String
-    GeneratorSheetName = MakeSheetName(g.Station & "_" & g.Generator)
+' Суффикс события: "" для первого, "_E2", "_E3"... для последующих
+Private Function EventSuffix(ByVal evIdx As Long) As String
+    If evIdx > 1 Then EventSuffix = "_E" & evIdx Else EventSuffix = ""
 End Function
 
-Private Function GeneratorChartSheetName(ByRef g As TGenCfg) As String
-    Dim base As String, full As String
+Private Function GeneratorSheetName(ByRef g As TGenCfg, ByVal evIdx As Long) As String
+    Dim base As String, sfx As String
+    sfx = EventSuffix(evIdx)
     base = g.Station & "_" & g.Generator
-    full = base & CHART_SUFFIX
+    If Len(base & sfx) > 31 Then base = Left$(base, 31 - Len(sfx))
+    GeneratorSheetName = MakeSheetName(base & sfx)
+End Function
+
+Private Function GeneratorChartSheetName(ByRef g As TGenCfg, ByVal evIdx As Long) As String
+    Dim base As String, full As String, sfx As String
+    sfx = EventSuffix(evIdx)
+    base = g.Station & "_" & g.Generator
+    full = base & sfx & CHART_SUFFIX
     If Len(full) > 31 Then
-        base = Left$(base, 31 - Len(CHART_SUFFIX))
-        full = base & CHART_SUFFIX
+        base = Left$(base, 31 - Len(CHART_SUFFIX) - Len(sfx))
+        full = base & sfx & CHART_SUFFIX
     End If
     GeneratorChartSheetName = MakeSheetName(full)
 End Function
@@ -3121,6 +4549,8 @@ Private Sub EnsureControlButtons(ByVal ws As Worksheet)
         "Очистить результаты", "ClearOPRCHResults", RGB(150, 150, 150), RGB(255, 255, 255)
     AddOrReplaceButton ws, "btnPresets", ws.Range("M30"), 220, 32, _
         "Применить пресеты типов", "ApplyPresetsToConfig", RGB(80, 160, 100), RGB(255, 255, 255)
+    AddOrReplaceButton ws, "btnExportPdf", ws.Range("Q30"), 200, 32, _
+        "Экспорт отчёта в PDF", "ExportOPRCHReport", RGB(160, 90, 160), RGB(255, 255, 255)
 End Sub
 
 Private Sub AddOrReplaceButton(ByVal ws As Worksheet, ByVal nm As String, ByVal anchor As Range, _
