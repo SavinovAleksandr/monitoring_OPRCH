@@ -2,7 +2,7 @@ Attribute VB_Name = "OPRCH_Monitor"
 Option Explicit
 
 ' Точки входа AnalyzeOPRCH / SetupOPRCHTemplate. Импортировать 5.
-' OPRCH_Monitor v1.7.1 — часть раздельного модуля (лимит VBA ~64 КБ на модуль).
+' OPRCH_Monitor v1.8.0 — часть раздельного модуля (лимит VBA ~64 КБ на модуль).
 
 Public Sub SetupOPRCHTemplate()
     Dim wsRaw As Worksheet, wsCfg As Worksheet, wsSum As Worksheet
@@ -38,19 +38,23 @@ Public Sub SetupOPRCHTemplate()
     wsCfg.Cells(2, 23).Resize(1, 2).Value = Array("fном, Гц", 50)
     wsCfg.Cells(3, 23).Resize(1, 2).Value = Array("Время начала события", "")
     wsCfg.Cells(4, 23).Resize(1, 2).Value = Array("Автопоиск старта (1/0)", 1)
-    wsCfg.Cells(5, 23).Resize(1, 2).Value = Array("Колич. интервал, с", 82)
+    wsCfg.Cells(5, 23).Resize(1, 2).Value = Array("Запасной интервал tр (если нет QS), с", 300)
     wsCfg.Cells(6, 23).Resize(1, 2).Value = Array("Допуск количеств., %", 10)
     wsCfg.Cells(7, 23).Resize(1, 2).Value = Array("Порог включения в работу, МВт", 1)
-    wsCfg.Cells(8, 23).Resize(1, 2).Value = Array("Pre-start буфер, с", 5)
+    wsCfg.Cells(8, 23).Resize(1, 2).Value = Array("Pre-start буфер, с (реком. >=300)", 15)
     wsCfg.Cells(9, 23).Resize(1, 2).Value = Array("Интервал графика, с", 120)
-    wsCfg.Cells(10, 23).Resize(1, 2).Value = Array("Окно установив., с", 30)
+    wsCfg.Cells(10, 23).Resize(1, 2).Value = Array("Окно установив./конец события, с", 30)
     wsCfg.Cells(11, 23).Resize(1, 2).Value = Array("Порог реакции 15 с, %Pном", 0.5)
     wsCfg.Cells(12, 23).Resize(1, 2).Value = Array("Усреднение P0/Pтек, с (0=текущие)", 0)
     wsCfg.Cells(13, 23).Resize(1, 2).Value = Array("Режим (Авария/Испытание)", "Авария")
     wsCfg.Cells(14, 23).Resize(1, 2).Value = Array("Макс. окно события, с", 600)
     wsCfg.Cells(15, 23).Resize(1, 2).Value = Array("Макс. число событий (1=только первое)", 3)
     wsCfg.Cells(16, 23).Resize(1, 2).Value = Array("Ограничение Pтреб, %Pном (0=нет)", 10)
+    wsCfg.Cells(17, 23).Resize(1, 2).Value = Array("Строгий дефицит 4.2.14.1 (1/0)", 1)
     wsCfg.Range("X13").NumberFormat = "@"
+    WriteInstructionSheet
+    EnsureSheet(SH_LOG)
+    EnsureSheet(SH_SUM)
 
     ' Профили Kд(t) по Приложению к МУ оценки участия в ОПРЧ (Приложение 14 к Техтребованиям):
     '   ТЭС (кроме ПГУ): Kд = 0.5 на [0;15] с, далее линейно до 1.0 к T
@@ -225,7 +229,9 @@ Public Sub AnalyzeOPRCH()
         stepName = "Поиск событий для " & g.Generator
         fCol = FindHeaderColFuzzy(wsRaw, g.FreqHeader)
         If fCol = 0 Then Err.Raise vbObjectError + 2102, , "Не найдена колонка частоты '" & g.FreqHeader & "' для " & g.Generator
-        nEv = FindEvents(wsRaw, timeCol, fCol, st, g.Fnch, evList)
+        ' Для поиска границ: с РМ — fном; без РМ — частота в начале выборки (уточняется до f(t0) в анализе).
+        nEv = FindEvents(wsRaw, timeCol, fCol, st, g.Fnch, _
+                         IIf(g.HasRM, st.FNom, NzD(wsRaw.Cells(2, fCol).Value, st.FNom)), evList)
         If nEv > 1 Then AppendLog "INFO", g.Station & "/" & g.Generator, "Найдено событий (выходов за fнч): " & nEv
 
         For k = 1 To nEv
@@ -317,6 +323,45 @@ End Sub
 ' ==========================================================
 ' Анализ одного генератора
 ' ==========================================================
+
+Public Sub WriteInstructionSheet()
+    Dim ws As Worksheet
+    Set ws = EnsureSheet(SH_INSTR)
+    ws.Cells.Clear
+    ws.Range("A1").Value = "Мониторинг ОПРЧ v" & OPRCH_VERSION & " — что вводить и как считать"
+    ws.Range("A1").Font.Bold = True
+    ws.Range("A1").Font.Size = 14
+    ws.Range("A3").Value = "1. ИСХОДНЫЕ ДАННЫЕ (обязательно)"
+    ws.Range("A3").Font.Bold = True
+    ws.Range("A4").Value = "• Лист RawData: колонка «Время» (шаг <= 5 с) + частота станции + активные мощности генераторов (МВт)."
+    ws.Range("A5").Value = "• Окно данных по п. 3.1 МУ: желательно >= 5 мин до начала отклонения и до устойчивого возврата в 50±0.1 Гц более 5 мин."
+    ws.Range("A6").Value = "• Лист Config: по каждому генератору — станция, имя, заголовки колонок мощности/частоты, тип, Pном, S, fнч, РМ (1/0), компоновка (блок/неблок)."
+    ws.Range("A7").Value = "• Пустые нормативные поля (t5/t10, fнч…) заполняются кнопкой «Применить пресеты типов»."
+    ws.Range("A8").Value = "• Глобальные настройки — колонки W/X: режим Авария/Испытание, fном, автопоиск, строгий дефицит (W17)."
+    ws.Range("A10").Value = "2. ОДИН ЗАПУСК = ВСЁ СРАЗУ"
+    ws.Range("A10").Font.Bold = True
+    ws.Range("A11").Value = "Кнопка «Запустить мониторинг ОПРЧ» (AnalyzeOPRCH) выполняет количественную и качественную оценку в одном проходе."
+    ws.Range("A12").Value = "Отдельно «только качественно» / «только количественно» запускать не нужно: макрос сам отсекает неприменимое по п. 4.1.2 / 4.1.3."
+    ws.Range("A13").Value = "• Колич. (Прил. 14 п. 4.2): P0, f0, Pтреб(t), tр, дефицит по периодам, реакция 15 с, сумма неблока."
+    ws.Range("A14").Value = "• Кач. (Прил. 14 п. 4.4): тип реакции 1-8. Ступени t5/t10 (Прил. 1) считаются всегда при «Кач_вкл=1»."
+    ws.Range("A16").Value = "3. РЕЖИМЫ РАСЧЁТА (Config W13)"
+    ws.Range("A16").Font.Bold = True
+    ws.Range("A17").Value = "• Авария — мониторинг реальных событий (Прил. 14). Без РМ: S=6 %, fнч=0.15 Гц. Дефицит «хотя бы в одном периоде» -> НАРУШЕНИЕ. t5/t10 только в замечаниях."
+    ws.Range("A18").Value = "• Испытание — контрольные испытания (Прил. 1 + формулы Прил. 14). S/fнч из Config. Несданные t5/t10 -> НАРУШЕНИЕ. Применимость 4.1.2/4.1.3 не отсекает."
+    ws.Range("A20").Value = "4. РЕЗУЛЬТАТЫ"
+    ws.Range("A20").Font.Bold = True
+    ws.Range("A21").Value = "• Summary — сводная таблица; колонка «Вывод» — главный вердикт."
+    ws.Range("A22").Value = "• Листы <Ст>_<Ген> / <Ст>_Сумма и *_Граф — ряды и графики; Протокол — текстовая сводка; Log — предупреждения."
+    ws.Range("A23").Value = "• Для неблочной ТЭС нормативный вывод — по сумме станции (п. 4.2.10); строки генераторов при ОК по сумме — справочно."
+    ws.Range("A25").Value = "5. ЗАПУСК"
+    ws.Range("A25").Font.Bold = True
+    ws.Range("A26").Value = "Откройте готовый .xlsm -> при необходимости разрешите макросы -> Config -> «Запустить мониторинг ОПРЧ»."
+    ws.Range("A27").Value = "Не запускайте SetupOPRCHTemplate на заполненном шаблоне — он перезапишет RawData/Config демо-данными."
+    ws.Columns("A").ColumnWidth = 140
+    On Error Resume Next
+    ws.Move Before:=ThisWorkbook.Worksheets(1)
+    On Error GoTo 0
+End Sub
 
 Public Sub EnsureControlButtons(ByVal ws As Worksheet)
     AddOrReplaceButton ws, "btnRunOPRCH", ws.Range("E30"), 260, 32, _

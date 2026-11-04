@@ -2,7 +2,7 @@ Attribute VB_Name = "OPRCH_Sheets"
 Option Explicit
 
 ' Summary, протокол, станционные листы. Импортировать 3.
-' OPRCH_Monitor v1.7.1 — часть раздельного модуля (лимит VBA ~64 КБ на модуль).
+' OPRCH_Monitor v1.8.0 — часть раздельного модуля (лимит VBA ~64 КБ на модуль).
 
 Public Sub AddProtocolLine(ByVal s As String)
     If m_Protocol Is Nothing Then Set m_Protocol = New Collection
@@ -205,10 +205,12 @@ Public Sub WriteGeneratorSheet(ByVal wsRaw As Worksheet, ByRef st As TSettings, 
     markerLoAbs = res.P0 - markerSpanAbs
     target10Val = targetPreq
 
-    Dim preqStep As Double
+    Dim preqStep As Double, f0g As Double
+    f0g = res.F0
+    If f0g <= 0 Then f0g = st.FNom
     For r = displayStartRow To endRow
         dP = NzD(wsRaw.Cells(r, pCol).Value, 0) - res.P0
-        dFr = DeadbandDeviation(NzD(wsRaw.Cells(r, fCol).Value, st.FNom) - st.FNom, g.Fnch)
+        dFr = DeadbandDeviation(NzD(wsRaw.Cells(r, fCol).Value, f0g) - f0g, g.Fnch)
         preqStep = ClampReserve(PReqCalc(g.SPct, g.PNom, st.FNom, DynamicKdByTime(g.EquipType, _
                    SecBetween(wsRaw.Cells(res.StartRow, timeCol).Value, wsRaw.Cells(r, timeCol).Value)), dFr, st.MaxReqPct), _
                    res.ReservePlus, res.ReserveMinus)
@@ -333,8 +335,9 @@ Public Sub BuildOneStationAggregate(ByVal wsRaw As Worksheet, ByVal wsCfg As Wor
     Dim pCols() As Long, fnchArr() As Double, sArr() As Double, pnomArr() As Double, etArr() As String
     Dim pmaxArr() As Double, pminArr() As Double
     Dim freqCol As Long, timeCol As Long
-    Dim isNeblok As Boolean
+    Dim isNeblok As Boolean, anyHasRM As Boolean
     Dim evList() As TEvent, nEv As Long, k As Long
+    Dim fRef As Double
 
     cfgLast = LastUsedRow(wsCfg)
     timeCol = FindHeaderCol(wsRaw, "Время")
@@ -342,6 +345,7 @@ Public Sub BuildOneStationAggregate(ByVal wsRaw As Worksheet, ByVal wsCfg As Wor
 
     cnt = 0
     isNeblok = False
+    anyHasRM = False
     For r = 2 To cfgLast
         If Len(Trim$(CStr(wsCfg.Cells(r, 2).Value))) = 0 Then GoTo NextCfg
         g = ReadGenCfgEff(wsCfg, r, st)
@@ -365,6 +369,7 @@ Public Sub BuildOneStationAggregate(ByVal wsRaw As Worksheet, ByVal wsCfg As Wor
                     pmaxArr(cnt) = g.PMax
                     pminArr(cnt) = g.PMin
                     If UCase$(g.Layout) = "НЕБЛОК" Then isNeblok = True
+                    If g.HasRM Then anyHasRM = True
                     If freqCol = 0 Then freqCol = FindHeaderColFuzzy(wsRaw, g.FreqHeader)
                 End If
             End If
@@ -374,11 +379,16 @@ NextCfg:
     If cnt = 0 Then Exit Sub
     If freqCol = 0 Then Exit Sub
 
-    nEv = FindEvents(wsRaw, timeCol, freqCol, st, MinArray(fnchArr), evList)
+    If anyHasRM Then
+        fRef = st.FNom
+    Else
+        fRef = NzD(wsRaw.Cells(2, freqCol).Value, st.FNom)
+    End If
+    nEv = FindEvents(wsRaw, timeCol, freqCol, st, MinArray(fnchArr), fRef, evList)
     For k = 1 To nEv
         BuildOneStationAggregateEvent wsRaw, wsSummary, stationName, paropipeFilter, st, outRow, _
                                       pCols, fnchArr, sArr, pnomArr, etArr, pmaxArr, pminArr, cnt, _
-                                      freqCol, timeCol, isNeblok, evList(k), k
+                                      freqCol, timeCol, isNeblok, anyHasRM, evList(k), k
     Next k
 End Sub
 
@@ -389,7 +399,7 @@ Public Sub BuildOneStationAggregateEvent(ByVal wsRaw As Worksheet, ByVal wsSumma
                                       ByRef pnomArr() As Double, ByRef etArr() As String, _
                                       ByRef pmaxArr() As Double, ByRef pminArr() As Double, ByVal cnt As Long, _
                                       ByVal freqCol As Long, ByVal timeCol As Long, ByVal isNeblok As Boolean, _
-                                      ByRef ev As TEvent, ByVal evIdx As Long)
+                                      ByVal anyHasRM As Boolean, ByRef ev As TEvent, ByVal evIdx As Long)
     Dim r As Long
     Dim shName As String, ws As Worksheet
     Dim startRow As Long, endRow As Long, rowQ As Long, firstExceedRow As Long, evEnd As Long
@@ -402,6 +412,7 @@ Public Sub BuildOneStationAggregateEvent(ByVal wsRaw As Worksheet, ByVal wsSumma
     Dim limited As Boolean, limitType As String
     Dim sr As TStationResult
     Dim srcLabel As String
+    Dim f0 As Double
 
     srcLabel = stationName & IIf(Len(paropipeFilter) > 0, "/" & paropipeFilter, "") & " (сумма)" & IIf(evIdx > 1, " событие " & evIdx, "")
 
@@ -410,6 +421,8 @@ Public Sub BuildOneStationAggregateEvent(ByVal wsRaw As Worksheet, ByVal wsSumma
     evEnd = ev.EndRow
     If evEnd < startRow Then evEnd = startRow
     endRow = RowByTimeOffset(wsRaw, timeCol, startRow, st.QuantIntervalSec)
+    f0 = ResolveF0(wsRaw, freqCol, startRow, anyHasRM, st.FNom)
+    sr.F0 = f0
 
     ' П. 4.2.10: сумма по включённому в работу (P > порога) и готовому к ОПРЧ оборудованию.
     ' Pном_сум / Pmax_сум / Pmin_сум - только по генераторам, находившимся в работе на старте.
@@ -479,7 +492,7 @@ Public Sub BuildOneStationAggregateEvent(ByVal wsRaw As Worksheet, ByVal wsSumma
         ws.Cells(rowQ, 3).Value = pNow
         ws.Cells(rowQ, 4).Value = pNow - p0
 
-        dfAbs = NzD(wsRaw.Cells(r, freqCol).Value, st.FNom) - st.FNom
+        dfAbs = NzD(wsRaw.Cells(r, freqCol).Value, f0) - f0
         If Abs(dfAbs) > Abs(dF) Then dF = dfAbs
         If r < evEnd Then
             dt = SecBetween(wsRaw.Cells(r, timeCol).Value, wsRaw.Cells(r + 1, timeCol).Value)
@@ -522,16 +535,26 @@ Public Sub BuildOneStationAggregateEvent(ByVal wsRaw As Worksheet, ByVal wsSumma
             defSec = defSec + dt
         End If
 
-        ' выбор tр: худшая квазиустановившаяся точка (п. 4.2.5 / Приложение)
+        ' выбор tр: худшая квазиустановившаяся точка (п. 4.2.5 / Приложение);
+        ' без QS — худшая точка по дефициту в самой точке (fb ниже)
         If tSecAgg >= 15 And preqCap <> 0 Then
-            isQS = IsQuasiSteady(wsRaw, freqCol, timeCol, r, st.FNom, fMean)
+            have = SgnNZ(preqCap) * (pNow - p0)
+            If (Abs(preqCap) - tolSum) - have > trDef Then
+                ' запоминаем и как запасной (без QS) — trDfrRow/trRow переопределяются ниже при QS
+                If Not anyQS Then
+                    If (Abs(preqCap) - tolSum) - have > trDef Then trDef = (Abs(preqCap) - tolSum) - have: trRow = r
+                End If
+            End If
+            isQS = IsQuasiSteady(wsRaw, freqCol, timeCol, r, f0, fMean)
             If isQS Then
-                If DeadbandDeviation(fMean - st.FNom, MinArray(fnchArr)) <> 0 Then
+                If DeadbandDeviation(fMean - f0, MinArray(fnchArr)) <> 0 Then
                     anyQS = True
                     have = SgnNZ(preqCap) * (pNow - p0)
                     If (Abs(preqCap) - tolSum) - have > trDef Then trDef = (Abs(preqCap) - tolSum) - have: trRow = r
-                    If Abs(fMean - st.FNom) > trDfrAbs Then trDfrAbs = Abs(fMean - st.FNom): trDfrRow = r
+                    If Abs(fMean - f0) > trDfrAbs Then trDfrAbs = Abs(fMean - f0): trDfrRow = r
                 End If
+            ElseIf Abs(dfAbs) > trDfrAbs Then
+                trDfrAbs = Abs(dfAbs): trDfrRow = r
             End If
         End If
         rowQ = rowQ + 1
@@ -546,6 +569,8 @@ Public Sub BuildOneStationAggregateEvent(ByVal wsRaw As Worksheet, ByVal wsSumma
             trRow = IIf(trDfrRow > 0, trDfrRow, trRow)
         End If
         trQS = True
+    ElseIf trRow > 0 Then
+        trQS = False
     Else
         trRow = endRow
         trQS = False
@@ -570,9 +595,10 @@ Public Sub BuildOneStationAggregateEvent(ByVal wsRaw As Worksheet, ByVal wsSumma
 
     Dim dfTr As Double
     If trQS Then
-        dfTr = MeanFreqAround(wsRaw, freqCol, timeCol, trRow, QS_HALF_WINDOW_SEC, st.FNom) - st.FNom
+        dfTr = MeanFreqAround(wsRaw, freqCol, timeCol, trRow, QS_HALF_WINDOW_SEC, f0) - f0
     Else
-        dfTr = MaxAbsDeviationInWindow(wsRaw, freqCol, startRow, trRow, st.FNom)
+        ' f и P в выбранной точке tр (не max|df| по окну)
+        dfTr = NzD(wsRaw.Cells(trRow, freqCol).Value, f0) - f0
     End If
     preqOrig = 0
     For i = 1 To cnt
@@ -633,7 +659,7 @@ Public Sub BuildOneStationAggregateEvent(ByVal wsRaw As Worksheet, ByVal wsSumma
     anyOutside = False
     For i = 1 To cnt
         If inWork(i) Then
-            dfr15 = DeadbandDeviation(NzD(wsRaw.Cells(row15, freqCol).Value, st.FNom) - st.FNom, fnchArr(i))
+            dfr15 = DeadbandDeviation(NzD(wsRaw.Cells(row15, freqCol).Value, f0) - f0, fnchArr(i))
             If dfr15 <> 0 Then
                 anyOutside = True
                 preq15Sum = preq15Sum + PReqCalc(sArr(i), pnomArr(i), st.FNom, DynamicKdByTime(etArr(i), 15#), dfr15, st.MaxReqPct)
@@ -1231,12 +1257,28 @@ Public Sub ValidateInputs(ByVal wsRaw As Worksheet, ByVal wsCfg As Worksheet, By
 NX:
     Next r
 
-    If st.QuantIntervalSec < 60 Then AppendLog "WARN", "Settings", "Колич. интервал < 60 с: " & st.QuantIntervalSec
+    If st.QuantIntervalSec < 60 Then AppendLog "WARN", "Settings", "Запасной интервал tр < 60 с: " & st.QuantIntervalSec
     If st.SteadyWindowSec < 10 Then AppendLog "WARN", "Settings", "Окно установившегося < 10 с: " & st.SteadyWindowSec
     If st.React15ThrPct > 2 Then AppendLog "WARN", "Settings", "Порог реакции 15 с > 2 %Pном (" & st.React15ThrPct & ") - п. 4.2.11 требует лишь наличия реакции"
     If st.AvgWindowSec > 30 Then AppendLog "WARN", "Settings", "Окно усреднения P0/Pтек > 30 с: " & st.AvgWindowSec
     If st.MaxReqPct > 0 And st.MaxReqPct < 10 Then AppendLog "WARN", "Settings", "Ограничение Pтреб < 10 %Pном (" & st.MaxReqPct & ") - по Приложению к МУ принимается 10 %"
-    If st.MaxEventSec < st.QuantIntervalSec Then AppendLog "WARN", "Settings", "Макс. окно события (" & st.MaxEventSec & " с) меньше контрольного интервала (" & st.QuantIntervalSec & " с)"
+    If st.MaxEventSec < st.QuantIntervalSec Then AppendLog "WARN", "Settings", "Макс. окно события (" & st.MaxEventSec & " с) меньше запасного интервала tр (" & st.QuantIntervalSec & " с)"
+    AppendLog "INFO", "Settings", "Строгий дефицит п. 4.2.14.1: " & IIf(st.StrictDeficit, "вкл (дефицит в любом периоде -> НАРУШЕНИЕ)", "выкл (дефицит -> замечание)")
+
+    ' п. 3.1: ориентир по длительности выборки
+    Dim tFirst As Variant, tLast As Variant, spanMin As Double
+    If IsDate(wsRaw.Cells(2, timeCol).Value) And IsDate(wsRaw.Cells(lastR, timeCol).Value) Then
+        tFirst = wsRaw.Cells(2, timeCol).Value
+        tLast = wsRaw.Cells(lastR, timeCol).Value
+        spanMin = SecBetween(tFirst, tLast) / 60#
+        If spanMin < 10 Then
+            AppendLog "WARN", "RawData", "Длительность выборки ~ " & Format(spanMin, "0.0") & _
+                      " мин. По п. 3.1 МУ желательно >= 5 мин до отклонения и до возврата в 50±0.1 Гц более 5 мин."
+        Else
+            AppendLog "INFO", "RawData", "Длительность выборки ~ " & Format(spanMin, "0.0") & " мин (" & _
+                      Format(tFirst, "dd.mm.yyyy hh:mm:ss") & " — " & Format(tLast, "dd.mm.yyyy hh:mm:ss") & ")"
+        End If
+    End If
 
     ' Справка по профилям Kд(t): значения в контрольных точках 15 с и колич. интервала
     If Not m_KdProfiles Is Nothing Then
@@ -1257,11 +1299,14 @@ End Sub
 Public Sub CollectOldOutputSheets(ByRef names As Collection)
     Dim ws As Worksheet
     For Each ws In ThisWorkbook.Worksheets
-        If ws.Name <> SH_RAW And ws.Name <> SH_CFG And ws.Name <> SH_SUM And ws.Name <> SH_LOG Then
+        If ws.Name <> SH_RAW And ws.Name <> SH_CFG And ws.Name <> SH_SUM And ws.Name <> SH_LOG _
+           And ws.Name <> SH_INSTR And ws.Name <> SH_QUERY Then
             names.Add ws.Name
         End If
     Next ws
 End Sub
+
+' Краткая инструкция на отдельном листе (не удаляется при AnalyzeOPRCH / ClearOPRCHResults)
 
 Public Sub DeleteOutputSheets(ByVal names As Collection)
     Dim i As Long

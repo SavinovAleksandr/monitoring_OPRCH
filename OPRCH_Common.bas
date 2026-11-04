@@ -2,7 +2,7 @@ Attribute VB_Name = "OPRCH_Common"
 Option Explicit
 
 ' Типы, константы, общие функции. Импортировать 1.
-' OPRCH_Monitor v1.7.1 — часть раздельного модуля (лимит VBA ~64 КБ на модуль).
+' OPRCH_Monitor v1.8.0 — часть раздельного модуля (лимит VBA ~64 КБ на модуль).
 
 ' ==========================================================
 ' OPRCH monitoring  (quantitative + qualitative)
@@ -10,60 +10,32 @@ Option Explicit
 ' Per-station:    data sheet <Ст>_Сумма[_<Пп>] +  chart sheet <...>_Граф
 ' Extra sheets:   Summary, Log
 '
-' Версия: 1.7.1
-' Нормативная база: Методические указания по оценке участия генерирующего
-'   оборудования в ОПРЧ (Приложение 14 к Техтребованиям, ред. 01.03.2026):
-'   п. 4.1.2/4.1.3 (применимость количественной/качественной оценки),
-'   п. 4.2.1-4.2.3 (формулы dPп, Pтп, dFр), 4.2.5 (выбор tр в пользу момента,
-'   фиксирующего несоответствие), 4.2.6 (усреднение P/f, колебания >5 периодов),
-'   4.2.7-4.2.8 (допуск 1 %Pном), 4.2.9 (квазиустановившиеся интервалы),
-'   4.2.10 (оценка неблочной части по сумме станции -> индивидуальная оценка
-'   только при нарушении), 4.2.11 (наличие реакции РЧВ турбины через 15 с),
-'   4.2.14.1 (дефицит хотя бы в один из периодов), 4.2.14.4 (колебания),
-'   4.4.1 (типы реакции 1-8), 4.4.3/4.4.4 (отсутствие «адекватной» реакции
-'   без РМ / с РМ), Приложение (Kд(t): ТЭС 0.5 до 15 с -> 1.0 к 300/360/420 с;
-'   ПГУ 0.25 до 15 с -> 0.5 к 30 с -> 1.0 к 120 с; квазиустановившийся режим:
-'   |f - fср(±15 с)| <= 10 мГц; Pтреб не более 10 %Pном; идентификация
-'   переходной функции h(15 с), п. 6.2 - справочно).
-' Режим работы (Config W13): «Авария» - мониторинг реальных событий: для
-'   оборудования без регулятора мощности (Config U = 0) принимаются S = 6 %,
-'   fнч = 0.15 Гц независимо от Config (максимально допустимые по Техтребованиям);
-'   «Испытание» - контрольные испытания: используются фактические S/fнч из Config,
-'   проверка применимости по п. 4.1.2/4.1.3 не выполняется.
-' Основные критерии:
-'   - Количественный (|Pфакт|/|Pтреб|) с допуском и направлением;
-'   - Перерегулирование (>100%+допуск);
-'   - Качественные подкритерии: t5, t10, установившееся (среднее по хвосту);
-'   - Характер переходного процесса: Монотонный / Апериодический / Колебательный;
-'   - Амплитуда возмущения в %Pном и метка масштаба события;
-'   - Пресеты параметров по типу оборудования (ПТУ_блок / ПТУ_неблок /
-'     ГТУ / ПГУ_утил / ПГУ_сбросн / ГПА) подставляются при пустых ячейках;
-'   - Учет Pmax/Pmin (диапазон регулирования): капинг Pтреб по располагаемому
-'     резерву, статус 'Ограничен Pmax/Pmin' в Summary, WARN при резерве <5 %Pном,
-'     горизонтальные уровни Pmax/Pmin и цветная зона за лимитом на графике.
-'     Для станционных сумм Pmax_сум/Pmin_сум = сумма по включенным генераторам
-'     (по паропроводам У/Э для ТЭЦ СЛПК).
-'   - Реакция РЧВ через 15 с (п. 4.2.11): отдельный статус в Summary;
-'   - Дефицит первичной мощности по точкам окна (п. 4.2.14.1): макс. %Pном и длительность;
-'   - Вердикт по сумме станции (п. 4.2.10) со строкой в Summary и выводом о
-'     необходимости индивидуальной оценки генераторов.
-'   - 1.7.0: режим «Авария/Испытание»; признак РМ и компоновка (блок/неблок);
-'     применимость оценки (п. 4.1.2/4.1.3); несколько событий в одной выборке
-'     (листы с суффиксом _E2, _E3...); выбор tр как худшей квазиустановившейся
-'     точки (п. 4.2.5/4.2.9, Приложение); колебания мощности (п. 4.2.14.4);
-'     контроль качества телеизмерений; тип реакции по п. 4.4.1; оценка h(15 с)
-'     идентификацией переходной функции (Приложение п. 6.2, справочно); лист
-'     «Протокол»; экспорт отчёта в PDF; нестрогий поиск колонок RawData;
-'     оформление графиков по И.2 (сетка не реже 15 с, подписи осей).
+' Версия: 1.8.0
+' Нормативная база:
+'   - Приложение 14 (оценка участия в ОПРЧ) — режим «Авария»: tр, дефицит
+'     «хотя бы в одном периоде» (п. 4.2.14.1), реакция 15 с, типы реакции 1-8;
+'   - Приложение 1 (проверка готовности) — режим «Испытание»: ступени t5/t10,
+'     допуск установившегося ±1 %Pном (табл. Е / бланки Ж).
+' Ключевые формулы: п. 4.2.1-4.2.3 (dPп, Pтп, dFр); f0 = fном при наличии РМ,
+'   иначе f(t0) (п. 4.2.4.1); Kд(t) по Приложению; неблок — по сумме (п. 4.2.10).
+' Режим (Config W13):
+'   «Авария» — без РМ: S=6 %, fнч=0.15 Гц; ступени t5/t10 только справочно;
+'   «Испытание» — S/fнч из Config; применимость 4.1.2/4.1.3 не отсекает;
+'     несданные t5/t10 входят в НАРУШЕНИЕ.
+' 1.8.0: f0; tр без QS по f/P в точке (не max|df| по окну); дефицит -> вердикт;
+'   п. 4.1.3 без лазейки «раз колич. прошло»; раздельные контуры Авария/Испытание;
+'   WARN по окну данных п. 3.1; лист «Инструкция».
 ' ==========================================================
 
-Public Const OPRCH_VERSION As String = "1.7.1"
+Public Const OPRCH_VERSION As String = "1.8.0"
 
 Public Const SH_RAW As String = "RawData"
 Public Const SH_CFG As String = "Config"
 Public Const SH_SUM As String = "Summary"
 Public Const SH_LOG As String = "Log"
 Public Const SH_PROT As String = "Протокол"
+Public Const SH_INSTR As String = "Инструкция"
+Public Const SH_QUERY As String = "Запрос"
 Public Const CHART_SUFFIX As String = "_Граф"
 
 ' Нормативные константы МУ (Приложение 14)
@@ -106,6 +78,7 @@ Public Type TSettings
     MaxEventSec As Double     ' макс. длительность окна одного события, с
     MaxEvents As Long         ' макс. число событий в выборке (1 = только первое)
     MaxReqPct As Double       ' ограничение Pтреб, %Pном (Приложение: 10 %; 0 = без ограничения)
+    StrictDeficit As Boolean  ' True: дефицит «хотя бы в одном периоде» = НАРУШЕНИЕ (п. 4.2.14.1)
 End Type
 
 ' Событие (интервал выхода частоты за fнч)
@@ -216,6 +189,7 @@ Public Type TGenResult
     QualClauseVerdict As String ' вывод по п. 4.4.3/4.4.4
     H15 As Double               ' оценка переходной функции h(15 с); -999 = не вычислено
     H15Note As String
+    F0 As Double                ' опорная частота: fном (с РМ) или f(t0) (без РМ), п. 4.2.4.1
 End Type
 
 ' Результат оценки по сумме станции (п. 4.2.10)
@@ -256,6 +230,7 @@ Public Type TStationResult
     TrTime As Variant
     TrSec As Double
     TrQuasiSteady As Boolean
+    F0 As Double
 End Type
 
 ' ==========================================================
@@ -281,8 +256,7 @@ Public Function ClampReserve(ByVal v As Double, ByVal reservePlus As Double, ByV
     ClampReserve = v
 End Function
 
-' Чтение строки Config с учётом режима: в «Аварии» для оборудования без РМ
-' принимаются S = 6 %, fнч = 0.15 Гц независимо от Config.
+' п. 4.2.4.1: с РМ опорная частота = fном; без РМ = частота в момент t0 (старт события).
 
 Public Function ReadGenCfgEff(ByVal ws As Worksheet, ByVal r As Long, ByRef st As TSettings) As TGenCfg
     Dim g As TGenCfg
@@ -360,6 +334,125 @@ End Function
 ' Возвращает число событий (>= 1) и массив ev(1..n).
 ' ----------------------------------------------------------
 
+Public Function IdentifyH15(ByVal wsRaw As Worksheet, ByRef st As TSettings, ByRef g As TGenCfg, _
+                             ByVal pCol As Long, ByVal fCol As Long, ByVal timeCol As Long, _
+                             ByVal centerRow As Long, ByVal p0 As Double, ByVal f0 As Double, ByRef note As String) As Double
+    Const NPTS As Long = 50      ' t-17 .. t+32 (46 точек + по 2 для сглаживания)
+    Const NH As Long = 15
+    Dim x() As Double, y() As Double, xs() As Double, ys() As Double, dx() As Double, dy() As Double
+    Dim a() As Double, b() As Double, dh() As Double
+    Dim i As Long, j As Long, k As Long, r As Long, lastR As Long
+    Dim dfr As Double, s As Double, c As Long, sumAbsDx As Double, h As Double, tr As Double
+    ReDim x(1 To NPTS): ReDim y(1 To NPTS): ReDim xs(1 To NPTS): ReDim ys(1 To NPTS)
+    ReDim dx(1 To NPTS): ReDim dy(1 To NPTS)
+    ReDim a(1 To NH, 1 To NH): ReDim b(1 To NH): ReDim dh(1 To NH)
+
+    IdentifyH15 = -999
+    note = ""
+    If centerRow <= 0 Or g.PNom <= 0 Or g.SPct <= 0 Then note = "h(15 с): нет момента выхода за fнч": Exit Function
+    lastR = LastUsedRow(wsRaw)
+    If RowByTimeOffset(wsRaw, timeCol, centerRow, 32#) >= lastR Then note = "h(15 с): недостаточно данных после выхода за fнч": Exit Function
+
+    For i = 1 To NPTS
+        r = RowByTimeOffset(wsRaw, timeCol, centerRow, CDbl(i - 18))   ' i=18 -> t
+        If r < 2 Then r = 2
+        dfr = DeadbandDeviation(NzD(wsRaw.Cells(r, fCol).Value, f0) - f0, g.Fnch)
+        x(i) = PReqCalc(g.SPct, g.PNom, st.FNom, 1#, dfr, st.MaxReqPct) / g.PNom * 100#
+        y(i) = (NzD(wsRaw.Cells(r, pCol).Value, p0) - p0) / g.PNom * 100#
+    Next i
+    ' скользящее среднее по 5 точкам
+    For i = 1 To NPTS
+        s = 0: c = 0
+        For j = i - 2 To i + 2
+            If j >= 1 And j <= NPTS Then s = s + x(j): c = c + 1
+        Next j
+        xs(i) = s / c
+        s = 0: c = 0
+        For j = i - 2 To i + 2
+            If j >= 1 And j <= NPTS Then s = s + y(j): c = c + 1
+        Next j
+        ys(i) = s / c
+    Next i
+    ' приращения на рабочем отрезке i = 3..48 (46 точек)
+    dx(3) = 0: dy(3) = 0
+    sumAbsDx = 0
+    For i = 4 To 48
+        dx(i) = xs(i) - xs(i - 1)
+        dy(i) = ys(i) - ys(i - 1)
+        sumAbsDx = sumAbsDx + Abs(dx(i))
+    Next i
+    If sumAbsDx < 0.05 Then note = "h(15 с): входное воздействие (Pтреб) практически не менялось - идентификация не выполнена": Exit Function
+
+    ' нормальные уравнения: A(i,j) = sum_k dx(k-i)*dx(k-j), b(i) = sum_k dx(k-i)*dy(k)
+    For i = 1 To NH
+        b(i) = 0
+        For j = 1 To NH
+            a(i, j) = 0
+        Next j
+    Next i
+    For k = 3 + NH To 48
+        For i = 1 To NH
+            b(i) = b(i) + dx(k - i) * dy(k)
+            For j = 1 To NH
+                a(i, j) = a(i, j) + dx(k - i) * dx(k - j)
+            Next j
+        Next i
+    Next k
+    ' регуляризация (малая добавка к диагонали) для устойчивости при ступенчатом входе
+    tr = 0
+    For i = 1 To NH
+        tr = tr + a(i, i)
+    Next i
+    For i = 1 To NH
+        a(i, i) = a(i, i) + 0.000001 * (tr / NH + 0.000001)
+    Next i
+    If Not SolveLinearSystem(a, b, dh, NH) Then note = "h(15 с): СЛАУ вырождена": Exit Function
+    h = 0
+    For i = 1 To NH
+        h = h + dh(i)
+    Next i
+    IdentifyH15 = h
+    note = "h(15 с) = " & Format(h, "0.00") & " (Прил. п. 6.2, справочно; ориентир " & Format(H15_REF, "0.0") & ")"
+End Function
+
+' Решение СЛАУ методом Гаусса с выбором главного элемента. a/b модифицируются.
+
+Public Function SolveLinearSystem(ByRef a() As Double, ByRef b() As Double, ByRef x() As Double, ByVal n As Long) As Boolean
+    Dim i As Long, j As Long, k As Long, piv As Long, tmp As Double, factor As Double
+    For k = 1 To n
+        piv = k
+        For i = k + 1 To n
+            If Abs(a(i, k)) > Abs(a(piv, k)) Then piv = i
+        Next i
+        If Abs(a(piv, k)) < 1E-14 Then SolveLinearSystem = False: Exit Function
+        If piv <> k Then
+            For j = 1 To n
+                tmp = a(k, j): a(k, j) = a(piv, j): a(piv, j) = tmp
+            Next j
+            tmp = b(k): b(k) = b(piv): b(piv) = tmp
+        End If
+        For i = k + 1 To n
+            factor = a(i, k) / a(k, k)
+            For j = k To n
+                a(i, j) = a(i, j) - factor * a(k, j)
+            Next j
+            b(i) = b(i) - factor * b(k)
+        Next i
+    Next k
+    For i = n To 1 Step -1
+        tmp = b(i)
+        For j = i + 1 To n
+            tmp = tmp - a(i, j) * x(j)
+        Next j
+        x(i) = tmp / a(i, i)
+    Next i
+    SolveLinearSystem = True
+End Function
+
+' ----------------------------------------------------------
+' Протокол (текстовый отчёт)
+' ----------------------------------------------------------
+
 Public Function FindHeaderColFuzzy(ByVal ws As Worksheet, ByVal headerName As String) As Long
     Dim lastCol As Long, c As Long, v As String, target As String, found As Long
     FindHeaderColFuzzy = FindHeaderCol(ws, headerName)
@@ -413,7 +506,7 @@ Public Function ReadSettings(ByVal wsCfg As Worksheet) As TSettings
     End If
     st.FNom = NzD(wsCfg.Cells(2, valCol).Value, 50#)
     st.AutoStart = (NzD(wsCfg.Cells(4, valCol).Value, 1) <> 0)
-    st.QuantIntervalSec = NzD(wsCfg.Cells(5, valCol).Value, 82#)
+    st.QuantIntervalSec = NzD(wsCfg.Cells(5, valCol).Value, 300#)
     st.QuantTolPct = NzD(wsCfg.Cells(6, valCol).Value, 10#)
     st.WorkThresholdMW = NzD(wsCfg.Cells(7, valCol).Value, 1#)
     st.PreBufferSec = NzD(wsCfg.Cells(8, valCol).Value, 5#)
@@ -439,6 +532,13 @@ Public Function ReadSettings(ByVal wsCfg As Worksheet) As TSettings
     If st.MaxEvents < 1 Then st.MaxEvents = 1
     st.MaxReqPct = NzD(wsCfg.Cells(16, valCol).Value, 10#)
     If st.MaxReqPct < 0 Then st.MaxReqPct = 0
+    ' W17: строгий дефицит п. 4.2.14.1 (1 = НАРУШЕНИЕ при любом периоде с дефицитом).
+    ' По умолчанию: в «Аварии» — строго, в «Испытании» — по замечанию (можно включить явно).
+    If Len(Trim$(CStr(wsCfg.Cells(17, 23).Value))) > 0 Or Len(Trim$(CStr(wsCfg.Cells(17, valCol).Value))) > 0 Then
+        st.StrictDeficit = (NzD(wsCfg.Cells(17, valCol).Value, IIf(st.IsEmergency, 1, 0)) <> 0)
+    Else
+        st.StrictDeficit = st.IsEmergency
+    End If
     If IsDate(wsCfg.Cells(3, valCol).Value) Then
         st.EventStart = CDate(wsCfg.Cells(3, valCol).Value)
     Else

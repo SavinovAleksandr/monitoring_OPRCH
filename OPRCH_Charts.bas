@@ -2,7 +2,7 @@ Attribute VB_Name = "OPRCH_Charts"
 Option Explicit
 
 ' Графики генераторов и станции. Импортировать 4.
-' OPRCH_Monitor v1.7.1 — часть раздельного модуля (лимит VBA ~64 КБ на модуль).
+' OPRCH_Monitor v1.8.0 — часть раздельного модуля (лимит VBA ~64 КБ на модуль).
 
 Public Sub FillMarkerColumn(ByVal ws As Worksheet, ByVal rr1 As Long, ByVal rr2 As Long, _
                              ByVal wsRaw As Worksheet, ByVal timeCol As Long, _

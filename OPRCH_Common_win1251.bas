@@ -3,13 +3,15 @@ Option Explicit
 
 
 
-Public Const OPRCH_VERSION As String = "1.7.1"
+Public Const OPRCH_VERSION As String = "1.8.0"
 
 Public Const SH_RAW As String = "RawData"
 Public Const SH_CFG As String = "Config"
 Public Const SH_SUM As String = "Summary"
 Public Const SH_LOG As String = "Log"
 Public Const SH_PROT As String = "Протокол"
+Public Const SH_INSTR As String = "Инструкция"
+Public Const SH_QUERY As String = "Запрос"
 Public Const CHART_SUFFIX As String = "_Граф"
 
 Public Const QUANT_DF_HZ As Double = 0.2          ' п. 4.1.2: колич. оценка при |dF| >= 0.2 Гц
@@ -51,6 +53,7 @@ Public Type TSettings
     MaxEventSec As Double     ' макс. длительность окна одного события, с
     MaxEvents As Long         ' макс. число событий в выборке (1 = только первое)
     MaxReqPct As Double       ' ограничение Pтреб, %Pном (Приложение: 10 %; 0 = без ограничения)
+    StrictDeficit As Boolean  ' True: дефицит «хотя бы в одном периоде» = НАРУШЕНИЕ (п. 4.2.14.1)
 End Type
 
 Public Type TEvent
@@ -159,6 +162,7 @@ Public Type TGenResult
     QualClauseVerdict As String ' вывод по п. 4.4.3/4.4.4
     H15 As Double               ' оценка переходной функции h(15 с); -999 = не вычислено
     H15Note As String
+    F0 As Double                ' опорная частота: fном (с РМ) или f(t0) (без РМ), п. 4.2.4.1
 End Type
 
 Public Type TStationResult
@@ -198,6 +202,7 @@ Public Type TStationResult
     TrTime As Variant
     TrSec As Double
     TrQuasiSteady As Boolean
+    F0 As Double
 End Type
 
 
@@ -286,6 +291,117 @@ Public Function IsQuasiSteady(ByVal wsRaw As Worksheet, ByVal fCol As Long, ByVa
 End Function
 
 
+Public Function IdentifyH15(ByVal wsRaw As Worksheet, ByRef st As TSettings, ByRef g As TGenCfg, _
+                             ByVal pCol As Long, ByVal fCol As Long, ByVal timeCol As Long, _
+                             ByVal centerRow As Long, ByVal p0 As Double, ByVal f0 As Double, ByRef note As String) As Double
+    Const NPTS As Long = 50      ' t-17 .. t+32 (46 точек + по 2 для сглаживания)
+    Const NH As Long = 15
+    Dim x() As Double, y() As Double, xs() As Double, ys() As Double, dx() As Double, dy() As Double
+    Dim a() As Double, b() As Double, dh() As Double
+    Dim i As Long, j As Long, k As Long, r As Long, lastR As Long
+    Dim dfr As Double, s As Double, c As Long, sumAbsDx As Double, h As Double, tr As Double
+    ReDim x(1 To NPTS): ReDim y(1 To NPTS): ReDim xs(1 To NPTS): ReDim ys(1 To NPTS)
+    ReDim dx(1 To NPTS): ReDim dy(1 To NPTS)
+    ReDim a(1 To NH, 1 To NH): ReDim b(1 To NH): ReDim dh(1 To NH)
+
+    IdentifyH15 = -999
+    note = ""
+    If centerRow <= 0 Or g.PNom <= 0 Or g.SPct <= 0 Then note = "h(15 с): нет момента выхода за fнч": Exit Function
+    lastR = LastUsedRow(wsRaw)
+    If RowByTimeOffset(wsRaw, timeCol, centerRow, 32#) >= lastR Then note = "h(15 с): недостаточно данных после выхода за fнч": Exit Function
+
+    For i = 1 To NPTS
+        r = RowByTimeOffset(wsRaw, timeCol, centerRow, CDbl(i - 18))   ' i=18 -> t
+        If r < 2 Then r = 2
+        dfr = DeadbandDeviation(NzD(wsRaw.Cells(r, fCol).Value, f0) - f0, g.Fnch)
+        x(i) = PReqCalc(g.SPct, g.PNom, st.FNom, 1#, dfr, st.MaxReqPct) / g.PNom * 100#
+        y(i) = (NzD(wsRaw.Cells(r, pCol).Value, p0) - p0) / g.PNom * 100#
+    Next i
+    For i = 1 To NPTS
+        s = 0: c = 0
+        For j = i - 2 To i + 2
+            If j >= 1 And j <= NPTS Then s = s + x(j): c = c + 1
+        Next j
+        xs(i) = s / c
+        s = 0: c = 0
+        For j = i - 2 To i + 2
+            If j >= 1 And j <= NPTS Then s = s + y(j): c = c + 1
+        Next j
+        ys(i) = s / c
+    Next i
+    dx(3) = 0: dy(3) = 0
+    sumAbsDx = 0
+    For i = 4 To 48
+        dx(i) = xs(i) - xs(i - 1)
+        dy(i) = ys(i) - ys(i - 1)
+        sumAbsDx = sumAbsDx + Abs(dx(i))
+    Next i
+    If sumAbsDx < 0.05 Then note = "h(15 с): входное воздействие (Pтреб) практически не менялось - идентификация не выполнена": Exit Function
+
+    For i = 1 To NH
+        b(i) = 0
+        For j = 1 To NH
+            a(i, j) = 0
+        Next j
+    Next i
+    For k = 3 + NH To 48
+        For i = 1 To NH
+            b(i) = b(i) + dx(k - i) * dy(k)
+            For j = 1 To NH
+                a(i, j) = a(i, j) + dx(k - i) * dx(k - j)
+            Next j
+        Next i
+    Next k
+    tr = 0
+    For i = 1 To NH
+        tr = tr + a(i, i)
+    Next i
+    For i = 1 To NH
+        a(i, i) = a(i, i) + 0.000001 * (tr / NH + 0.000001)
+    Next i
+    If Not SolveLinearSystem(a, b, dh, NH) Then note = "h(15 с): СЛАУ вырождена": Exit Function
+    h = 0
+    For i = 1 To NH
+        h = h + dh(i)
+    Next i
+    IdentifyH15 = h
+    note = "h(15 с) = " & Format(h, "0.00") & " (Прил. п. 6.2, справочно; ориентир " & Format(H15_REF, "0.0") & ")"
+End Function
+
+
+Public Function SolveLinearSystem(ByRef a() As Double, ByRef b() As Double, ByRef x() As Double, ByVal n As Long) As Boolean
+    Dim i As Long, j As Long, k As Long, piv As Long, tmp As Double, factor As Double
+    For k = 1 To n
+        piv = k
+        For i = k + 1 To n
+            If Abs(a(i, k)) > Abs(a(piv, k)) Then piv = i
+        Next i
+        If Abs(a(piv, k)) < 1E-14 Then SolveLinearSystem = False: Exit Function
+        If piv <> k Then
+            For j = 1 To n
+                tmp = a(k, j): a(k, j) = a(piv, j): a(piv, j) = tmp
+            Next j
+            tmp = b(k): b(k) = b(piv): b(piv) = tmp
+        End If
+        For i = k + 1 To n
+            factor = a(i, k) / a(k, k)
+            For j = k To n
+                a(i, j) = a(i, j) - factor * a(k, j)
+            Next j
+            b(i) = b(i) - factor * b(k)
+        Next i
+    Next k
+    For i = n To 1 Step -1
+        tmp = b(i)
+        For j = i + 1 To n
+            tmp = tmp - a(i, j) * x(j)
+        Next j
+        x(i) = tmp / a(i, i)
+    Next i
+    SolveLinearSystem = True
+End Function
+
+
 Public Function FindHeaderColFuzzy(ByVal ws As Worksheet, ByVal headerName As String) As Long
     Dim lastCol As Long, c As Long, v As String, target As String, found As Long
     FindHeaderColFuzzy = FindHeaderCol(ws, headerName)
@@ -332,7 +448,7 @@ Public Function ReadSettings(ByVal wsCfg As Worksheet) As TSettings
     End If
     st.FNom = NzD(wsCfg.Cells(2, valCol).Value, 50#)
     st.AutoStart = (NzD(wsCfg.Cells(4, valCol).Value, 1) <> 0)
-    st.QuantIntervalSec = NzD(wsCfg.Cells(5, valCol).Value, 82#)
+    st.QuantIntervalSec = NzD(wsCfg.Cells(5, valCol).Value, 300#)
     st.QuantTolPct = NzD(wsCfg.Cells(6, valCol).Value, 10#)
     st.WorkThresholdMW = NzD(wsCfg.Cells(7, valCol).Value, 1#)
     st.PreBufferSec = NzD(wsCfg.Cells(8, valCol).Value, 5#)
@@ -357,6 +473,11 @@ Public Function ReadSettings(ByVal wsCfg As Worksheet) As TSettings
     If st.MaxEvents < 1 Then st.MaxEvents = 1
     st.MaxReqPct = NzD(wsCfg.Cells(16, valCol).Value, 10#)
     If st.MaxReqPct < 0 Then st.MaxReqPct = 0
+    If Len(Trim$(CStr(wsCfg.Cells(17, 23).Value))) > 0 Or Len(Trim$(CStr(wsCfg.Cells(17, valCol).Value))) > 0 Then
+        st.StrictDeficit = (NzD(wsCfg.Cells(17, valCol).Value, IIf(st.IsEmergency, 1, 0)) <> 0)
+    Else
+        st.StrictDeficit = st.IsEmergency
+    End If
     If IsDate(wsCfg.Cells(3, valCol).Value) Then
         st.EventStart = CDate(wsCfg.Cells(3, valCol).Value)
     Else

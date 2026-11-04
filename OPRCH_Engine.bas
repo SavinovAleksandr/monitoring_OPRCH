@@ -2,7 +2,7 @@ Attribute VB_Name = "OPRCH_Engine"
 Option Explicit
 
 ' Расчёт участия в ОПРЧ. Импортировать 2.
-' OPRCH_Monitor v1.7.1 — часть раздельного модуля (лимит VBA ~64 КБ на модуль).
+' OPRCH_Monitor v1.8.0 — часть раздельного модуля (лимит VBA ~64 КБ на модуль).
 
 Public Function AnalyzeOneGenerator(ByVal wsRaw As Worksheet, ByRef st As TSettings, ByRef g As TGenCfg, _
                                      ByRef ev As TEvent, ByVal evIdx As Long) As TGenResult
@@ -15,6 +15,7 @@ Public Function AnalyzeOneGenerator(ByVal wsRaw As Worksheet, ByRef st As TSetti
     Dim kdQuant As Double, tQuantSec As Double
     Dim qpct As Double, qpass As Boolean
     Dim calcStep As String
+    Dim f0 As Double
 
     calcStep = "Поиск колонок"
     timeCol = FindHeaderCol(wsRaw, "Время")
@@ -30,6 +31,12 @@ Public Function AnalyzeOneGenerator(ByVal wsRaw As Worksheet, ByRef st As TSetti
     If evEnd < startRow Then evEnd = startRow
     res.EventIdx = evIdx
     res.EventEndRow = evEnd
+
+    calcStep = "Опорная частота f0 (п. 4.2.4.1)"
+    ' С РМ: отклонение от fном (обычно 50 Гц). Без РМ: от частоты в момент t0.
+    f0 = ResolveF0(wsRaw, fCol, startRow, g.HasRM, st.FNom)
+    res.F0 = f0
+
     calcStep = "Определение конца контрольного интервала"
     endQ = RowByTimeOffset(wsRaw, timeCol, startRow, st.QuantIntervalSec)
     calcStep = "Определение конца качественного интервала"
@@ -41,7 +48,7 @@ Public Function AnalyzeOneGenerator(ByVal wsRaw As Worksheet, ByRef st As TSetti
     p0 = AvgPowerBackward(wsRaw, pCol, timeCol, startRow, st.AvgWindowSec)
 
     calcStep = "Применимость оценки (п. 4.1.2/4.1.3)"
-    EvaluateApplicability wsRaw, st, g, fCol, timeCol, startRow, firstExceedRow, evEnd, res
+    EvaluateApplicability wsRaw, st, g, fCol, timeCol, startRow, firstExceedRow, evEnd, f0, res
 
     calcStep = "Учет Pmax/Pmin (резерв)"
     Dim pMaxEff As Double, pMinEff As Double
@@ -55,10 +62,10 @@ Public Function AnalyzeOneGenerator(ByVal wsRaw As Worksheet, ByRef st As TSetti
     If reservePlus < 0 Then reservePlus = 0
     If reserveMinus < 0 Then reserveMinus = 0
 
-    calcStep = "Контрольный интервал (Config W5): Pтреб/Pфакт"
+    calcStep = "Контрольный интервал (Config W5, запасной): Pтреб/Pфакт"
     Dim dfRef As Double, dfrRef As Double, preqRefOrig As Double, preqRef As Double
     tQuantSec = SecBetween(wsRaw.Cells(startRow, timeCol).Value, wsRaw.Cells(endQ, timeCol).Value)
-    dfRef = MaxAbsDeviationInWindow(wsRaw, fCol, startRow, endQ, st.FNom)
+    dfRef = MaxAbsDeviationInWindow(wsRaw, fCol, startRow, endQ, f0)
     dfrRef = DeadbandDeviation(dfRef, g.Fnch)
     preqRefOrig = PReqCalc(g.SPct, g.PNom, st.FNom, DynamicKdByTime(g.EquipType, tQuantSec), dfrRef, st.MaxReqPct)
     preqRef = ClampReserve(preqRefOrig, reservePlus, reserveMinus)
@@ -66,23 +73,24 @@ Public Function AnalyzeOneGenerator(ByVal wsRaw As Worksheet, ByRef st As TSetti
     res.PFactRef = AvgPowerBackward(wsRaw, pCol, timeCol, endQ, st.AvgWindowSec) - p0
 
     calcStep = "Выбор tр (п. 4.2.5/4.2.9)"
-    ' tр - худшая квазиустановившаяся по частоте точка окна события (макс. дефицит);
-    ' при отсутствии квазиустановившихся точек - конец контрольного интервала.
-    SelectEvaluationPoint wsRaw, st, g, pCol, fCol, timeCol, startRow, firstExceedRow, evEnd, endQ, p0, reservePlus, reserveMinus, res
+    ' tр - худшая квазиустановившаяся точка (макс. дефицит); без QS - худшая точка
+    ' окна по фактическим f и P в этой точке (не max|df| по окну).
+    SelectEvaluationPoint wsRaw, st, g, pCol, fCol, timeCol, startRow, firstExceedRow, evEnd, endQ, p0, f0, reservePlus, reserveMinus, res
     endQ = res.TrRow
     tQuantSec = res.TrSec
 
     calcStep = "Чтение Pтек(tр)"
     ptek = AvgPowerBackward(wsRaw, pCol, timeCol, endQ, st.AvgWindowSec)
-    calcStep = "Расчет dF/dFr"
-    df = MaxAbsDeviationInWindow(wsRaw, fCol, startRow, evEnd, st.FNom)
+    calcStep = "Расчет dF/dFr в точке tр"
+    df = MaxAbsDeviationInWindow(wsRaw, fCol, startRow, evEnd, f0)
     If res.TrQuasiSteady Then
         ' п. 4.2.6: в квазиустановившемся режиме - среднее значение частоты на отрезке ±15 с
-        dfr = DeadbandDeviation(MeanFreqAround(wsRaw, fCol, timeCol, endQ, QS_HALF_WINDOW_SEC, st.FNom) - st.FNom, g.Fnch)
+        dfr = DeadbandDeviation(MeanFreqAround(wsRaw, fCol, timeCol, endQ, QS_HALF_WINDOW_SEC, f0) - f0, g.Fnch)
     Else
-        dfr = DeadbandDeviation(MaxAbsDeviationInWindow(wsRaw, fCol, startRow, endQ, st.FNom), g.Fnch)
+        ' п. 4.2.5: оценка по f и P именно в выбранной точке tр
+        dfr = DeadbandDeviation(NzD(wsRaw.Cells(endQ, fCol).Value, f0) - f0, g.Fnch)
     End If
-    If dfr = 0 And dfrRef <> 0 Then dfr = dfrRef
+    If dfr = 0 And dfrRef <> 0 And res.TrQuasiSteady Then dfr = dfrRef
 
     calcStep = "Расчет требуемой мощности"
     Dim preqOrig As Double
@@ -191,7 +199,7 @@ Public Function AnalyzeOneGenerator(ByVal wsRaw As Worksheet, ByRef st As TSetti
 
     calcStep = "Реакция РЧВ через 15 с (п. 4.2.11)"
     Dim r15Status As String, r15Pass As Boolean, dp15 As Double, r15Note As String
-    EvaluateReaction15 wsRaw, st, pCol, fCol, timeCol, startRow, firstExceedRow, p0, g.PNom, g.SPct, _
+    EvaluateReaction15 wsRaw, st, pCol, fCol, timeCol, startRow, firstExceedRow, p0, f0, g.PNom, g.SPct, _
                        g.Fnch, g.EquipType, SgnNZ(preqOrig), reservePlus, reserveMinus, _
                        r15Status, r15Pass, dp15, r15Note
     res.React15Status = r15Status
@@ -206,7 +214,7 @@ Public Function AnalyzeOneGenerator(ByVal wsRaw As Worksheet, ByRef st As TSetti
     ' Окно наблюдения - всё событие (до возврата частоты в зону нечувствительности
     ' или до границы окна события), а не только контрольный интервал.
     Dim defMaxPct As Double, defSec As Double
-    EvaluateDeficit wsRaw, st, pCol, fCol, timeCol, startRow, evEnd, p0, g.PNom, g.SPct, g.Fnch, _
+    EvaluateDeficit wsRaw, st, pCol, fCol, timeCol, startRow, evEnd, p0, f0, g.PNom, g.SPct, g.Fnch, _
                     g.EquipType, reservePlus, reserveMinus, defMaxPct, defSec
     res.DeficitMaxPct = defMaxPct
     res.DeficitSec = defSec
@@ -220,11 +228,11 @@ Public Function AnalyzeOneGenerator(ByVal wsRaw As Worksheet, ByRef st As TSetti
     calcStep = "Качество телеизмерений"
     EvaluateTelemetry wsRaw, g, res, pCol, timeCol, startRow, evEnd
 
-    calcStep = "Качественный критерий"
-    EvaluateQualitative wsRaw, st, g, res, pCol, fCol, timeCol
+    calcStep = "Качественный критерий (Прил. 1: ступени; в «Аварии» — справочно)"
+    EvaluateQualitative wsRaw, st, g, res, pCol, fCol, timeCol, f0
 
     calcStep = "Идентификация переходной функции h(15 с) (Прил. п. 6.2)"
-    res.H15 = IdentifyH15(wsRaw, st, g, pCol, fCol, timeCol, firstExceedRow, p0, res.H15Note)
+    res.H15 = IdentifyH15(wsRaw, st, g, pCol, fCol, timeCol, firstExceedRow, p0, f0, res.H15Note)
 
     calcStep = "Тип реакции (п. 4.4.1)"
     ClassifyReactionType wsRaw, st, g, res, pCol, fCol, timeCol, startRow, evEnd
@@ -275,7 +283,7 @@ End Function
 Public Sub EvaluateReaction15(ByVal wsRaw As Worksheet, ByRef st As TSettings, _
                                ByVal pCol As Long, ByVal fCol As Long, ByVal timeCol As Long, _
                                ByVal startRow As Long, ByVal firstExceedRow As Long, _
-                               ByVal p0 As Double, ByVal pNom As Double, ByVal sPct As Double, _
+                               ByVal p0 As Double, ByVal f0 As Double, ByVal pNom As Double, ByVal sPct As Double, _
                                ByVal fnch As Double, ByVal equipType As String, ByVal needSign As Integer, _
                                ByVal reservePlus As Double, ByVal reserveMinus As Double, _
                                ByRef status As String, ByRef pass As Boolean, _
@@ -292,7 +300,7 @@ Public Sub EvaluateReaction15(ByVal wsRaw As Worksheet, ByRef st As TSettings, _
     row15 = RowByTimeOffset(wsRaw, timeCol, baseRow, 15#)
     dp15 = NzD(wsRaw.Cells(row15, pCol).Value, 0) - p0
     ' Требуемая мощность на 15-й секунде по текущей частоте (Kд(15 с))
-    dfr15 = DeadbandDeviation(NzD(wsRaw.Cells(row15, fCol).Value, st.FNom) - st.FNom, fnch)
+    dfr15 = DeadbandDeviation(NzD(wsRaw.Cells(row15, fCol).Value, f0) - f0, fnch)
     preq15 = 0
     If dfr15 <> 0 And sPct > 0 Then
         preq15 = PReqCalc(sPct, pNom, st.FNom, DynamicKdByTime(equipType, 15#), dfr15, st.MaxReqPct)
@@ -364,7 +372,7 @@ End Sub
 Public Sub EvaluateDeficit(ByVal wsRaw As Worksheet, ByRef st As TSettings, _
                             ByVal pCol As Long, ByVal fCol As Long, ByVal timeCol As Long, _
                             ByVal startRow As Long, ByVal endRow As Long, _
-                            ByVal p0 As Double, ByVal pNom As Double, ByVal sPct As Double, _
+                            ByVal p0 As Double, ByVal f0 As Double, ByVal pNom As Double, ByVal sPct As Double, _
                             ByVal fnch As Double, ByVal equipType As String, _
                             ByVal reservePlus As Double, ByVal reserveMinus As Double, _
                             ByRef defMaxPct As Double, ByRef defSec As Double)
@@ -375,7 +383,7 @@ Public Sub EvaluateDeficit(ByVal wsRaw As Worksheet, ByRef st As TSettings, _
     If pNom <= 0 Or sPct <= 0 Then Exit Sub
     tol = 0.01 * pNom
     For r = startRow To endRow
-        dFrT = DeadbandDeviation(NzD(wsRaw.Cells(r, fCol).Value, st.FNom) - st.FNom, fnch)
+        dFrT = DeadbandDeviation(NzD(wsRaw.Cells(r, fCol).Value, f0) - f0, fnch)
         If dFrT = 0 Then GoTo NextR
         tSec = SecBetween(wsRaw.Cells(startRow, timeCol).Value, wsRaw.Cells(r, timeCol).Value)
         ' первые 15 с - переходный участок, оценивается отдельно по п. 4.2.11 (реакция РЧВ)
@@ -419,7 +427,7 @@ Public Function BuildGeneratorVerdict(ByRef g As TGenCfg, ByRef res As TGenResul
         Exit Function
     End If
 
-    ' --- Количественная оценка (п. 4.2) ---
+    ' --- Количественная оценка (п. 4.2, Прил. 14) ---
     If res.QuantApplicable Then
         If res.Limited Then
             remark = remark & "Pтреб ограничен " & res.LimitType & " (п. 4.2.8: оценка по располагаемому резерву); "
@@ -427,12 +435,15 @@ Public Function BuildGeneratorVerdict(ByRef g As TGenCfg, ByRef res As TGenResul
             bad = bad & "Pфакт(tр) = " & Format(res.PFact, "0.00") & " МВт ниже Pтреб(tр) = " & Format(res.PReq, "0.00") & _
                   " МВт (" & Format(res.QuantPct, "0") & " %) - п. 4.2.14.1 (с учётом допуска п. 4.2.7/4.2.8 и Kд(t) Приложения); "
         End If
-        If res.DeficitSec > 0 And res.QuantPass And Not res.Limited Then
-            remark = remark & "кратковременный дефицит до " & Format(res.DeficitMaxPct, "0.0") & " %Pном в течение " & _
-                     Format(res.DeficitSec, "0") & " с (п. 4.2.14.1, в пределах допуска в tр); "
-        ElseIf res.DeficitSec > 0 Then
-            remark = remark & "дефицит до " & Format(res.DeficitMaxPct, "0.0") & " %Pном в течение " & _
-                     Format(res.DeficitSec, "0") & " с (п. 4.2.14.1); "
+        ' п. 4.2.14.1: неудовлетворительно, если дефицит хотя бы в одном периоде (с 15-й с)
+        If res.DeficitSec > 0 And Not res.Limited Then
+            If st.StrictDeficit Or st.IsEmergency Then
+                bad = bad & "дефицит первичной мощности до " & Format(res.DeficitMaxPct, "0.0") & " %Pном в течение " & _
+                      Format(res.DeficitSec, "0") & " с хотя бы в одном периоде - п. 4.2.14.1; "
+            Else
+                remark = remark & "дефицит до " & Format(res.DeficitMaxPct, "0.0") & " %Pном в течение " & _
+                         Format(res.DeficitSec, "0") & " с (п. 4.2.14.1); "
+            End If
         End If
         If res.OscViolation Then
             bad = bad & res.OscNote & " - п. 4.2.14.4; "
@@ -450,7 +461,9 @@ Public Function BuildGeneratorVerdict(ByRef g As TGenCfg, ByRef res As TGenResul
         remark = remark & "реакция 15 с не оценивается (" & res.React15Note & "); "
     End If
 
-    ' --- Качественная оценка (п. 4.4) ---
+    ' --- Качественная оценка ---
+    ' Авария (Прил. 14): типы реакции 1-8 (п. 4.4). Ступени t5/t10 — справочно.
+    ' Испытание (Прил. 1): несданные t5/t10 входят в НАРУШЕНИЕ.
     If res.QualApplicable Then
         If Len(res.ReactionType) > 0 Then remark = remark & "тип реакции по п. 4.4.1: " & res.ReactionType & "; "
         If Left$(res.QualClauseVerdict, 9) = "НАРУШЕНИЕ" Then
@@ -459,7 +472,11 @@ Public Function BuildGeneratorVerdict(ByRef g As TGenCfg, ByRef res As TGenResul
             remark = remark & res.QualClauseVerdict & "; "
         End If
         If g.QualEnabled And res.Dfr <> 0 And Not res.QualPass Then
-            remark = remark & "ступени динамики (Прил. 1, табл. Е): не выполнены " & res.QualFailedList & "; "
+            If Not st.IsEmergency Then
+                bad = bad & "ступени динамики (Прил. 1, табл. Е): не выполнены " & res.QualFailedList & "; "
+            Else
+                remark = remark & "ступени динамики (Прил. 1, табл. Е, справочно в режиме «Авария»): не выполнены " & res.QualFailedList & "; "
+            End If
         End If
     End If
 
@@ -472,6 +489,9 @@ Public Function BuildGeneratorVerdict(ByRef g As TGenCfg, ByRef res As TGenResul
         remark = remark & "оборудование без РМ, режим «Авария»: принято S = " & Format(g.SPct, "0.0") & " %, fнч = " & _
                  Format(g.Fnch, "0.000") & " Гц (в Config: S = " & Format(g.SPctCfg, "0.0") & " %, fнч = " & Format(g.FnchCfg, "0.000") & " Гц); "
     End If
+    If Abs(res.F0 - st.FNom) > 0.0005 Then
+        remark = remark & "f0 = " & Format(res.F0, "0.000") & " Гц (без РМ: частота в t0, п. 4.2.4.1; fном = " & Format(st.FNom, "0.00") & " Гц); "
+    End If
 
     If Len(bad) > 0 Then
         txt = "НАРУШЕНИЕ: " & bad
@@ -483,6 +503,9 @@ Public Function BuildGeneratorVerdict(ByRef g As TGenCfg, ByRef res As TGenResul
             okPart = okPart & "; качественно - реакция «адекватная» (п. 4.4.1)"
         ElseIf res.QualApplicable And res.ReactionCode > 1 Then
             okPart = okPart & "; качественно - тип реакции " & res.ReactionType & " (п. 4.4.1)"
+        End If
+        If Not st.IsEmergency And g.QualEnabled And res.QualPass Then
+            okPart = okPart & "; ступени динамики (Прил. 1) выполнены"
         End If
         txt = okPart & "; "
     End If
@@ -497,18 +520,34 @@ End Function
 ' ==========================================================
 
 ' Pтреб по формуле (2) МУ с ограничением |Pтреб| <= maxReqPct %Pном (Приложение: 0.1*Pном)
+' fNom в знаменателе формулы — номинальная частота (обычно 50 Гц), не путать с f0.
+
+Public Function ResolveF0(ByVal wsRaw As Worksheet, ByVal fCol As Long, ByVal startRow As Long, _
+                           ByVal hasRM As Boolean, ByVal fNom As Double) As Double
+    If hasRM Then
+        ResolveF0 = fNom
+    Else
+        ResolveF0 = NzD(wsRaw.Cells(startRow, fCol).Value, fNom)
+    End If
+End Function
+
+' Чтение строки Config с учётом режима: в «Аварии» для оборудования без РМ
+' принимаются S = 6 %, fнч = 0.15 Гц независимо от Config.
 
 Public Function FindEvents(ByVal wsRaw As Worksheet, ByVal timeCol As Long, ByVal fCol As Long, _
-                            ByRef st As TSettings, ByVal fnch As Double, ByRef ev() As TEvent) As Long
+                            ByRef st As TSettings, ByVal fnch As Double, ByVal fRef As Double, _
+                            ByRef ev() As TEvent) As Long
     Dim lastR As Long, r As Long, n As Long
     Dim prevOut As Boolean, curOut As Boolean, inEvent As Boolean
     Dim lastOutRow As Long, tStart As Double, tCur As Double, tLastOut As Double
     Dim outsideSec As Double, bestRow As Long, bestAbs As Double, val As Double
     Dim dropped As Long
+    Dim backInBand As Double, tBackStart As Double
 
     lastR = LastUsedRow(wsRaw)
     ReDim ev(1 To 1)
     n = 0
+    If fRef <= 0 Then fRef = st.FNom
 
     If lastR < 3 Then
         ev(1).StartRow = 2: ev(1).FirstExceedRow = 2: ev(1).EndRow = lastR
@@ -531,10 +570,10 @@ Public Function FindEvents(ByVal wsRaw As Worksheet, ByVal timeCol As Long, ByVa
         Exit Function
     End If
 
-    prevOut = (Abs(NzD(wsRaw.Cells(2, fCol).Value, st.FNom) - st.FNom) > fnch)
+    prevOut = (Abs(NzD(wsRaw.Cells(2, fCol).Value, fRef) - fRef) > fnch)
     inEvent = False
     For r = 3 To lastR
-        curOut = (Abs(NzD(wsRaw.Cells(r, fCol).Value, st.FNom) - st.FNom) > fnch)
+        curOut = (Abs(NzD(wsRaw.Cells(r, fCol).Value, fRef) - fRef) > fnch)
         If IsDate(wsRaw.Cells(r, timeCol).Value) Then tCur = CDbl(CDate(wsRaw.Cells(r, timeCol).Value)) * 86400#
         If Not inEvent Then
             If curOut And Not prevOut Then
@@ -548,15 +587,23 @@ Public Function FindEvents(ByVal wsRaw As Worksheet, ByVal timeCol As Long, ByVa
                 tStart = tCur
                 tLastOut = tCur
                 outsideSec = 0
+                tBackStart = 0
             End If
         Else
             If curOut Then
                 lastOutRow = r
                 tLastOut = tCur
                 outsideSec = outsideSec + 1
+                tBackStart = 0
+            ElseIf tBackStart = 0 Then
+                tBackStart = tCur
             End If
-            ' конец события: частота внутри fнч дольше окна установившегося или достигнут предел окна
-            If (Not curOut And (tCur - tLastOut) >= st.SteadyWindowSec) Or (tCur - tStart) >= st.MaxEventSec Then
+            ' Конец события: частота внутри fнч дольше SteadyWindowSec, либо
+            ' возврат в 50±0.1 Гц (п. 3.1 ориентир) на том же окне, либо MaxEventSec.
+            backInBand = Abs(NzD(wsRaw.Cells(r, fCol).Value, fRef) - st.FNom)
+            If (Not curOut And (tCur - tLastOut) >= st.SteadyWindowSec) _
+               Or (backInBand <= 0.1 And tBackStart > 0 And (tCur - tBackStart) >= st.SteadyWindowSec) _
+               Or (tCur - tStart) >= st.MaxEventSec Then
                 ev(n).EndRow = r
                 inEvent = False
                 ' фильтр коротких выбросов
@@ -575,7 +622,7 @@ Public Function FindEvents(ByVal wsRaw As Worksheet, ByVal timeCol As Long, ByVa
         ' Выхода за fнч не было: одно событие вокруг максимального отклонения (как в 1.6.x)
         bestRow = 2: bestAbs = -1
         For r = 2 To lastR
-            val = NzD(wsRaw.Cells(r, fCol).Value, st.FNom) - st.FNom
+            val = NzD(wsRaw.Cells(r, fCol).Value, fRef) - fRef
             If Abs(val) > bestAbs Then bestAbs = Abs(val): bestRow = r
         Next r
         ReDim ev(1 To 1)
@@ -602,7 +649,7 @@ End Function
 Public Sub EvaluateApplicability(ByVal wsRaw As Worksheet, ByRef st As TSettings, ByRef g As TGenCfg, _
                                   ByVal fCol As Long, ByVal timeCol As Long, _
                                   ByVal startRow As Long, ByVal firstExceedRow As Long, ByVal evEnd As Long, _
-                                  ByRef res As TGenResult)
+                                  ByVal f0 As Double, ByRef res As TGenResult)
     Dim r As Long, d As Double, dMax As Double, rMax As Long
     Dim run02 As Double, best02 As Double, outSec As Double, dt As Double
     Dim prevT As Double, curT As Double, minQuantSec As Double, isGpa As Boolean
@@ -620,7 +667,7 @@ Public Sub EvaluateApplicability(ByVal wsRaw As Worksheet, ByRef st As TSettings
         Else
             dt = 1
         End If
-        d = NzD(wsRaw.Cells(r, fCol).Value, st.FNom) - st.FNom
+        d = NzD(wsRaw.Cells(r, fCol).Value, f0) - f0
         If Abs(d) > Abs(dMax) Then dMax = d: rMax = r
         If Abs(d) >= QUANT_DF_HZ - 0.0000001 Then
             run02 = run02 + dt
@@ -643,7 +690,7 @@ Public Sub EvaluateApplicability(ByVal wsRaw As Worksheet, ByRef st As TSettings
     If Not st.IsEmergency Then
         res.QuantApplicable = True
         res.QualApplicable = True
-        res.Applicability = "Испытание: колич. + кач. (применимость по п. 4.1.2/4.1.3 не проверяется)"
+        res.Applicability = "Испытание: колич. (Прил. 14) + динамика t5/t10 (Прил. 1); применимость 4.1.2/4.1.3 не отсекает"
         Exit Sub
     End If
 
@@ -660,10 +707,10 @@ Public Sub EvaluateApplicability(ByVal wsRaw As Worksheet, ByRef st As TSettings
         txtQ = "|dF|max = " & Format(Abs(dMax), "0.000") & " Гц < 0.2 Гц (п. 4.1.2)"
     End If
 
-    ' п. 4.1.3: резкое (<= 10 с) отклонение продолжительностью >= 20 с;
-    ' п. 4.4.4 (с РМ): выход за 50±0.15 Гц; п. 4.4.3 (без РМ): скачок ±0.2..0.4 Гц.
+    ' п. 4.1.3: резкое (<= 10 с) отклонение продолжительностью >= 20 с.
+    ' Лазейка «раз колич. прошло — кач. тоже» убрана в 1.8.0.
     Dim jumpOk As Boolean, durOk As Boolean, levelOk As Boolean
-    jumpOk = (res.JumpSec <= QUAL_JUMP_SEC + 0.5) Or res.QuantApplicable
+    jumpOk = (res.JumpSec <= QUAL_JUMP_SEC + 0.5)
     durOk = (outSec >= QUAL_MIN_SEC - 0.5)
     If g.HasRM Then
         levelOk = (Abs(dMax) > QUAL_RM_DF_HZ)
@@ -698,26 +745,30 @@ End Sub
 ' ----------------------------------------------------------
 ' Выбор момента оценки tр (п. 4.2.5, 4.2.9, Приложение):
 ' среди квазиустановившихся по частоте точек окна события (t >= 15 с от t0,
-' |fср - fном| > fнч) выбирается точка с максимальным дефицитом первичной
+' |fср - f0| > fнч) выбирается точка с максимальным дефицитом первичной
 ' мощности относительно границы Pтреб(t) - 1 %Pном. Если дефицита нет -
-' точка с максимальным |dFр|. Если квазиустановившихся точек нет - конец
-' контрольного интервала (Config W5), как в 1.6.x.
+' точка с максимальным |dFр|. Если QS нет — худшая точка окна по f и P
+' именно в этой точке (не max|df| по окну и не «слепой» конец W5).
 ' ----------------------------------------------------------
 
 Public Sub SelectEvaluationPoint(ByVal wsRaw As Worksheet, ByRef st As TSettings, ByRef g As TGenCfg, _
                                   ByVal pCol As Long, ByVal fCol As Long, ByVal timeCol As Long, _
                                   ByVal startRow As Long, ByVal firstExceedRow As Long, ByVal evEnd As Long, _
-                                  ByVal endRef As Long, ByVal p0 As Double, _
+                                  ByVal endRef As Long, ByVal p0 As Double, ByVal f0 As Double, _
                                   ByVal reservePlus As Double, ByVal reserveMinus As Double, ByRef res As TGenResult)
     Dim r As Long, fMean As Double, dfrT As Double, tSec As Double, preqT As Double
     Dim have As Double, deficit As Double, tol As Double
     Dim bestRow As Long, bestDef As Double, bestDfrRow As Long, bestDfr As Double
     Dim anyQS As Boolean, stepR As Long, lastR As Long
+    Dim fbRow As Long, fbDef As Double, fbDfrRow As Long, fbDfr As Double
+    Dim fHere As Double
 
     tol = 0.01 * g.PNom
     bestRow = 0: bestDef = -1E+99
     bestDfrRow = 0: bestDfr = 0
     anyQS = False
+    fbRow = 0: fbDef = -1E+99
+    fbDfrRow = 0: fbDfr = 0
     lastR = LastUsedRow(wsRaw)
     If evEnd > lastR Then evEnd = lastR
 
@@ -728,8 +779,18 @@ Public Sub SelectEvaluationPoint(ByVal wsRaw As Worksheet, ByRef st As TSettings
     For r = startRow To evEnd Step stepR
         tSec = SecBetween(wsRaw.Cells(startRow, timeCol).Value, wsRaw.Cells(r, timeCol).Value)
         If tSec < 15 Then GoTo NextR
-        If Not IsQuasiSteady(wsRaw, fCol, timeCol, r, st.FNom, fMean) Then GoTo NextR
-        dfrT = DeadbandDeviation(fMean - st.FNom, g.Fnch)
+        fHere = NzD(wsRaw.Cells(r, fCol).Value, f0)
+        ' запасной перебор по фактической частоте в точке (без требования QS)
+        dfrT = DeadbandDeviation(fHere - f0, g.Fnch)
+        If dfrT <> 0 Then
+            preqT = ClampReserve(PReqCalc(g.SPct, g.PNom, st.FNom, DynamicKdByTime(g.EquipType, tSec), dfrT, st.MaxReqPct), reservePlus, reserveMinus)
+            have = SgnNZ(preqT) * (AvgPowerBackward(wsRaw, pCol, timeCol, r, st.AvgWindowSec) - p0)
+            deficit = (Abs(preqT) - tol) - have
+            If deficit > fbDef Then fbDef = deficit: fbRow = r
+            If Abs(dfrT) > Abs(fbDfr) Then fbDfr = dfrT: fbDfrRow = r
+        End If
+        If Not IsQuasiSteady(wsRaw, fCol, timeCol, r, f0, fMean) Then GoTo NextR
+        dfrT = DeadbandDeviation(fMean - f0, g.Fnch)
         If dfrT = 0 Then GoTo NextR
         anyQS = True
         preqT = ClampReserve(PReqCalc(g.SPct, g.PNom, st.FNom, DynamicKdByTime(g.EquipType, tSec), dfrT, st.MaxReqPct), reservePlus, reserveMinus)
@@ -748,6 +809,13 @@ NextR:
             res.TrRow = IIf(bestDfrRow > 0, bestDfrRow, bestRow)
         End If
         res.TrQuasiSteady = True
+    ElseIf fbRow > 0 Then
+        If fbDef > 0 Then
+            res.TrRow = fbRow
+        Else
+            res.TrRow = IIf(fbDfrRow > 0, fbDfrRow, fbRow)
+        End If
+        res.TrQuasiSteady = False
     Else
         res.TrRow = endRef
         res.TrQuasiSteady = False
@@ -1015,127 +1083,8 @@ End Sub
 ' Возвращает h(15 с) или -999, если вычислить невозможно. Результат справочный.
 ' ----------------------------------------------------------
 
-Public Function IdentifyH15(ByVal wsRaw As Worksheet, ByRef st As TSettings, ByRef g As TGenCfg, _
-                             ByVal pCol As Long, ByVal fCol As Long, ByVal timeCol As Long, _
-                             ByVal centerRow As Long, ByVal p0 As Double, ByRef note As String) As Double
-    Const NPTS As Long = 50      ' t-17 .. t+32 (46 точек + по 2 для сглаживания)
-    Const NH As Long = 15
-    Dim x() As Double, y() As Double, xs() As Double, ys() As Double, dx() As Double, dy() As Double
-    Dim a() As Double, b() As Double, dh() As Double
-    Dim i As Long, j As Long, k As Long, r As Long, lastR As Long
-    Dim dfr As Double, s As Double, c As Long, sumAbsDx As Double, h As Double, tr As Double
-    ReDim x(1 To NPTS): ReDim y(1 To NPTS): ReDim xs(1 To NPTS): ReDim ys(1 To NPTS)
-    ReDim dx(1 To NPTS): ReDim dy(1 To NPTS)
-    ReDim a(1 To NH, 1 To NH): ReDim b(1 To NH): ReDim dh(1 To NH)
-
-    IdentifyH15 = -999
-    note = ""
-    If centerRow <= 0 Or g.PNom <= 0 Or g.SPct <= 0 Then note = "h(15 с): нет момента выхода за fнч": Exit Function
-    lastR = LastUsedRow(wsRaw)
-    If RowByTimeOffset(wsRaw, timeCol, centerRow, 32#) >= lastR Then note = "h(15 с): недостаточно данных после выхода за fнч": Exit Function
-
-    For i = 1 To NPTS
-        r = RowByTimeOffset(wsRaw, timeCol, centerRow, CDbl(i - 18))   ' i=18 -> t
-        If r < 2 Then r = 2
-        dfr = DeadbandDeviation(NzD(wsRaw.Cells(r, fCol).Value, st.FNom) - st.FNom, g.Fnch)
-        x(i) = PReqCalc(g.SPct, g.PNom, st.FNom, 1#, dfr, st.MaxReqPct) / g.PNom * 100#
-        y(i) = (NzD(wsRaw.Cells(r, pCol).Value, p0) - p0) / g.PNom * 100#
-    Next i
-    ' скользящее среднее по 5 точкам
-    For i = 1 To NPTS
-        s = 0: c = 0
-        For j = i - 2 To i + 2
-            If j >= 1 And j <= NPTS Then s = s + x(j): c = c + 1
-        Next j
-        xs(i) = s / c
-        s = 0: c = 0
-        For j = i - 2 To i + 2
-            If j >= 1 And j <= NPTS Then s = s + y(j): c = c + 1
-        Next j
-        ys(i) = s / c
-    Next i
-    ' приращения на рабочем отрезке i = 3..48 (46 точек)
-    dx(3) = 0: dy(3) = 0
-    sumAbsDx = 0
-    For i = 4 To 48
-        dx(i) = xs(i) - xs(i - 1)
-        dy(i) = ys(i) - ys(i - 1)
-        sumAbsDx = sumAbsDx + Abs(dx(i))
-    Next i
-    If sumAbsDx < 0.05 Then note = "h(15 с): входное воздействие (Pтреб) практически не менялось - идентификация не выполнена": Exit Function
-
-    ' нормальные уравнения: A(i,j) = sum_k dx(k-i)*dx(k-j), b(i) = sum_k dx(k-i)*dy(k)
-    For i = 1 To NH
-        b(i) = 0
-        For j = 1 To NH
-            a(i, j) = 0
-        Next j
-    Next i
-    For k = 3 + NH To 48
-        For i = 1 To NH
-            b(i) = b(i) + dx(k - i) * dy(k)
-            For j = 1 To NH
-                a(i, j) = a(i, j) + dx(k - i) * dx(k - j)
-            Next j
-        Next i
-    Next k
-    ' регуляризация (малая добавка к диагонали) для устойчивости при ступенчатом входе
-    tr = 0
-    For i = 1 To NH
-        tr = tr + a(i, i)
-    Next i
-    For i = 1 To NH
-        a(i, i) = a(i, i) + 0.000001 * (tr / NH + 0.000001)
-    Next i
-    If Not SolveLinearSystem(a, b, dh, NH) Then note = "h(15 с): СЛАУ вырождена": Exit Function
-    h = 0
-    For i = 1 To NH
-        h = h + dh(i)
-    Next i
-    IdentifyH15 = h
-    note = "h(15 с) = " & Format(h, "0.00") & " (Прил. п. 6.2, справочно; ориентир " & Format(H15_REF, "0.0") & ")"
-End Function
-
-' Решение СЛАУ методом Гаусса с выбором главного элемента. a/b модифицируются.
-
-Public Function SolveLinearSystem(ByRef a() As Double, ByRef b() As Double, ByRef x() As Double, ByVal n As Long) As Boolean
-    Dim i As Long, j As Long, k As Long, piv As Long, tmp As Double, factor As Double
-    For k = 1 To n
-        piv = k
-        For i = k + 1 To n
-            If Abs(a(i, k)) > Abs(a(piv, k)) Then piv = i
-        Next i
-        If Abs(a(piv, k)) < 1E-14 Then SolveLinearSystem = False: Exit Function
-        If piv <> k Then
-            For j = 1 To n
-                tmp = a(k, j): a(k, j) = a(piv, j): a(piv, j) = tmp
-            Next j
-            tmp = b(k): b(k) = b(piv): b(piv) = tmp
-        End If
-        For i = k + 1 To n
-            factor = a(i, k) / a(k, k)
-            For j = k To n
-                a(i, j) = a(i, j) - factor * a(k, j)
-            Next j
-            b(i) = b(i) - factor * b(k)
-        Next i
-    Next k
-    For i = n To 1 Step -1
-        tmp = b(i)
-        For j = i + 1 To n
-            tmp = tmp - a(i, j) * x(j)
-        Next j
-        x(i) = tmp / a(i, i)
-    Next i
-    SolveLinearSystem = True
-End Function
-
-' ----------------------------------------------------------
-' Протокол (текстовый отчёт)
-' ----------------------------------------------------------
-
 Public Sub EvaluateQualitative(ByVal wsRaw As Worksheet, ByRef st As TSettings, ByRef g As TGenCfg, ByRef res As TGenResult, _
-                                ByVal pCol As Long, ByVal fCol As Long, ByVal timeCol As Long)
+                                ByVal pCol As Long, ByVal fCol As Long, ByVal timeCol As Long, ByVal f0 As Double)
     On Error GoTo EH
 
     Dim signReq As Integer, t5 As Double, t10 As Double
@@ -1145,6 +1094,8 @@ Public Sub EvaluateQualitative(ByVal wsRaw As Worksheet, ByRef st As TSettings, 
     Dim reason As String, failed As String, qStep As String
 
     qStep = "Проверка включения"
+    ' В режиме «Авария» ступени t5/t10 справочны (Прил. 1), но считаются для отчёта.
+    ' Отключение — только флагом Config «Кач_вкл».
     If Not g.QualEnabled Then
         res.QualPass = True
         res.QualT5Pass = True
@@ -1220,7 +1171,7 @@ Public Sub EvaluateQualitative(ByVal wsRaw As Worksheet, ByRef st As TSettings, 
     ' нет дефицита относительно текущего Pтреб(t) по Kд(t) (с допуском 1 %Pном).
     If Not hit10 Then
         Dim dFrEnd As Double, preqEnd As Double, haveEnd As Double
-        dFrEnd = DeadbandDeviation(NzD(wsRaw.Cells(res.EndQualRow, fCol).Value, st.FNom) - st.FNom, g.Fnch)
+        dFrEnd = DeadbandDeviation(NzD(wsRaw.Cells(res.EndQualRow, fCol).Value, f0) - f0, g.Fnch)
         preqEnd = PReqCalc(g.SPct, g.PNom, st.FNom, _
                   DynamicKdByTime(g.EquipType, SecBetween(wsRaw.Cells(res.StartRow, timeCol).Value, _
                                                           wsRaw.Cells(res.EndQualRow, timeCol).Value)), dFrEnd, st.MaxReqPct)
@@ -1259,9 +1210,13 @@ Public Sub EvaluateQualitative(ByVal wsRaw As Worksheet, ByRef st As TSettings, 
     ' В реальных событиях частота может восстановиться к концу качественного окна.
     ' Поэтому цель установившегося = среднее Pтреб(t) в том же хвостовом окне.
     ' Если частота вернулась, Pтреб_ср близок к нулю и генератор тоже должен вернуться к P0.
+    ' В режиме «Испытание» (скачок частоты) PтребSteady ~ статический Pтреб.
     res.PReqSteady = ComputeSteadyPReqMean(wsRaw, fCol, timeCol, res.EndQualRow, _
-                                           st.SteadyWindowSec, st.FNom, g.SPct, g.PNom, g.Fnch, _
+                                           st.SteadyWindowSec, f0, st.FNom, g.SPct, g.PNom, g.Fnch, _
                                            g.EquipType, wsRaw.Cells(res.StartRow, timeCol).Value, st.MaxReqPct)
+    If Not st.IsEmergency And Abs(res.PReqStatic) > Abs(res.PReqSteady) Then
+        res.PReqSteady = res.PReqStatic
+    End If
     res.PReqSteady = ClampReserve(res.PReqSteady, res.ReservePlus, res.ReserveMinus)
 
     ' допуск 0.5 с на дискретность выборки
@@ -1328,23 +1283,24 @@ End Function
 
 Public Function ComputeSteadyPReqMean(ByVal wsRaw As Worksheet, ByVal freqCol As Long, ByVal timeCol As Long, _
                                         ByVal endRow As Long, ByVal windowSec As Double, _
-                                        ByVal fNom As Double, ByVal sPct As Double, ByVal pNom As Double, _
+                                        ByVal f0 As Double, ByVal fNom As Double, ByVal sPct As Double, ByVal pNom As Double, _
                                         ByVal fnch As Double, _
                                         ByVal equipType As String, ByVal tStart As Variant, _
                                         ByVal maxReqPct As Double) As Double
     ' Усреднённый Pтреб(t) за окно [endRow-windowSec ; endRow].
-    ' Pтреб(t) = -100/S * Pном/fном * Kd * dFr(t), где dFr - отклонение за fнч (с ограничением maxReqPct).
+    ' dFr отсчитывается от f0; в формуле Pтреб в знаменателе — fном (обычно 50 Гц).
     Dim startRow As Long, r As Long
     Dim sumP As Double, cnt As Long
     Dim dFr As Double, fv As Double, kdEff As Double, tSec As Double
     If windowSec <= 0 Then windowSec = 30
     If sPct <= 0 Then Exit Function
+    If f0 <= 0 Then f0 = fNom
     startRow = RowByTimeOffset(wsRaw, timeCol, endRow, -windowSec)
     If startRow < 2 Then startRow = 2
     If startRow >= endRow Then startRow = endRow
     For r = startRow To endRow
         If IsNumeric(wsRaw.Cells(r, freqCol).Value) Then
-            fv = CDbl(wsRaw.Cells(r, freqCol).Value) - fNom
+            fv = CDbl(wsRaw.Cells(r, freqCol).Value) - f0
             dFr = DeadbandDeviation(fv, fnch)
             tSec = SecBetween(tStart, wsRaw.Cells(r, timeCol).Value)
             kdEff = DynamicKdByTime(equipType, tSec)
@@ -1476,9 +1432,14 @@ Public Function BuildStationVerdict(ByRef sr As TStationResult, ByRef st As TSet
             bad = bad & "Pфакт_сум(tр) = " & Format(sr.PFact, "0.00") & " МВт ниже Pтреб_сум(tр) = " & Format(sr.PReq, "0.00") & _
                   " МВт (" & Format(sr.QuantPct, "0") & " %) - п. 4.2.14.1; "
         End If
-        If sr.DeficitSec > 0 Then
-            remark = remark & "дефицит до " & Format(sr.DeficitMaxPct, "0.0") & " %Pном_сум в течение " & _
-                     Format(sr.DeficitSec, "0") & " с (п. 4.2.14.1); "
+        If sr.DeficitSec > 0 And Not sr.Limited Then
+            If st.StrictDeficit Or st.IsEmergency Then
+                bad = bad & "дефицит до " & Format(sr.DeficitMaxPct, "0.0") & " %Pном_сум в течение " & _
+                      Format(sr.DeficitSec, "0") & " с хотя бы в одном периоде - п. 4.2.14.1; "
+            Else
+                remark = remark & "дефицит до " & Format(sr.DeficitMaxPct, "0.0") & " %Pном_сум в течение " & _
+                         Format(sr.DeficitSec, "0") & " с (п. 4.2.14.1); "
+            End If
         End If
     Else
         remark = remark & sr.Applicability & "; "
