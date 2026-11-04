@@ -3,7 +3,7 @@ Option Explicit
 
 
 
-Public Const OPRCH_VERSION As String = "1.8.0"
+Public Const OPRCH_VERSION As String = "1.8.1"
 
 Public Const SH_RAW As String = "RawData"
 Public Const SH_CFG As String = "Config"
@@ -11,7 +11,6 @@ Public Const SH_SUM As String = "Summary"
 Public Const SH_LOG As String = "Log"
 Public Const SH_PROT As String = "Протокол"
 Public Const SH_INSTR As String = "Инструкция"
-Public Const SH_QUERY As String = "Запрос"
 Public Const CHART_SUFFIX As String = "_Граф"
 
 Public Const QUANT_DF_HZ As Double = 0.2          ' п. 4.1.2: колич. оценка при |dF| >= 0.2 Гц

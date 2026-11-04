@@ -1,7 +1,7 @@
 Attribute VB_Name = "OPRCH_Install"
 Option Explicit
 
-' Установщик OPRCH v1.8.0
+' Установщик OPRCH v1.8.1 (универсальный шаблон: RawData + Config)
 ' Импортируйте ТОЛЬКО этот файл в книгу (Alt+F11 -> File -> Import File),
 ' затем Alt+F8 -> InstallOPRCHMacros.
 ' Нужна галочка: Excel Options -> Trust Center -> Trust access to the VBA project object model.
@@ -63,7 +63,7 @@ Public Sub InstallOPRCHMacros()
         wb.Save
     End If
 
-    MsgBox "Макросы OPRCH v1.8.0 установлены." & vbCrLf & _
+    MsgBox "Макросы OPRCH v1.8.1 установлены." & vbCrLf & _
            "Откройте лист «Инструкция» или Config и нажмите «Запустить мониторинг ОПРЧ»." & vbCrLf & _
            "Модуль OPRCH_Install можно удалить (Alt+F11).", vbInformation
     Exit Sub

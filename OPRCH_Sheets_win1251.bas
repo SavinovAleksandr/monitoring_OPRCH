@@ -1238,7 +1238,7 @@ Public Sub CollectOldOutputSheets(ByRef names As Collection)
     Dim ws As Worksheet
     For Each ws In ThisWorkbook.Worksheets
         If ws.Name <> SH_RAW And ws.Name <> SH_CFG And ws.Name <> SH_SUM And ws.Name <> SH_LOG _
-           And ws.Name <> SH_INSTR And ws.Name <> SH_QUERY Then
+           And ws.Name <> SH_INSTR Then
             names.Add ws.Name
         End If
     Next ws

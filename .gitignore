@@ -1,0 +1,10 @@
+.DS_Store
+__pycache__/
+*.pyc
+~$*
+*.tmp
+*.xlsm
+method.txt
+Методические указания*.docx
+Примеры ручного анализа/*.xlsx
+Примеры ручного анализа/.DS_Store
