@@ -1,8 +1,8 @@
 Attribute VB_Name = "OPRCH_Common"
 Option Explicit
 
-' Типы, константы, общие функции. Импортировать 1.
-' OPRCH_Monitor v1.8.0 — часть раздельного модуля (лимит VBA ~64 КБ на модуль).
+' Типы, константы, общие функции. Импорт 1.
+' OPRCH_Monitor v1.8.2 — раздельный модуль (лимит VBA ~64 КБ).
 
 ' ==========================================================
 ' OPRCH monitoring  (quantitative + qualitative)
@@ -10,14 +10,14 @@ Option Explicit
 ' Per-station:    data sheet <Ст>_Сумма[_<Пп>] +  chart sheet <...>_Граф
 ' Extra sheets:   Summary, Log
 '
-' Версия: 1.8.1
+' Версия: 1.8.2
 ' Универсальный мониторинг: любая станция / любое событие через RawData + Config.
 ' Норматив: Прил. 14 (Авария) и Прил. 1 (Испытание). Вкладки «Запрос» нет.
-' 1.8.1: убрана вкладка «Запрос»; шаблон и инструкции обобщены.
-' 1.8.0: f0; tр без QS по точке; дефицит 4.2.14.1 -> вердикт; контуры Авария/Испытание.
+' 1.8.2: модуль OPRCH_Station (Sheets был >64КБ и не импортировался); готовый .xlsm.
+' 1.8.1: убрана вкладка «Запрос»; шаблон обобщён.
 ' ==========================================================
 
-Public Const OPRCH_VERSION As String = "1.8.1"
+Public Const OPRCH_VERSION As String = "1.8.2"
 
 Public Const SH_RAW As String = "RawData"
 Public Const SH_CFG As String = "Config"

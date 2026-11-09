@@ -1,19 +1,17 @@
 #!/usr/bin/env python3
-"""Split OPRCH_Monitor_all.bas → 5 modules, rebuild xlsx, try build xlsm via Excel."""
+"""Split OPRCH_Monitor_all.bas → 6 modules (лимит VBA ~64 КБ), rebuild xlsx, build xlsm."""
 from __future__ import annotations
 
 import re
 import shutil
 import subprocess
-import tempfile
 import zipfile
 from datetime import datetime, timedelta
 from pathlib import Path
 from zipfile import ZipFile
-from xml.etree import ElementTree as ET
 
 from openpyxl import Workbook, load_workbook
-from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
+from openpyxl.styles import Font, PatternFill, Border, Side
 from openpyxl.utils import get_column_letter
 
 ROOT = Path("/Users/asavinov/ОПРЧ/ОПРЧ")
@@ -30,36 +28,35 @@ ENGINE_PROCS = {
     "EvaluateApplicability", "SelectEvaluationPoint", "EvaluateOscillations",
     "EvaluateTelemetry", "ClassifyReactionType",
     "EvaluateQualitative", "ComputeSteadyMean", "ComputeSteadyPReqMean",
-    "EvaluateTransient", "FindEvents", "AvgPowerBackward",
-    "BuildStationVerdict", "ResolveF0",
+    "EvaluateTransient", "FindEvents", "AvgPowerBackward", "ResolveF0",
 }
-# IdentifyH15 + SolveLinearSystem -> Common (разгрузка Engine под лимит ~64 КБ)
+# Станционные агрегаты — отдельный модуль (Sheets был ~63 КБ и не импортировался)
+STATION_PROCS = {
+    "BuildStationAggregates", "BuildParoprovodSubAggregates", "SumPowerAtRow",
+    "BuildOneStationAggregate", "BuildOneStationAggregateEvent",
+    "AnnotateGeneratorRowsWithStationVerdict", "BuildStationVerdict",
+    "StationSheetName", "StationChartSheetName", "WriteStationChartSheet",
+}
 CHARTS_PROCS = {
     "WriteGeneratorChartSheet", "ApplyChartAxesFormat",
     "GetRangeMinMaxByCols", "MaxAbsInCols", "WriteChartVerdictBlock", "FindChartEndRow",
-    "WriteStationChartSheet", "AddSeries", "AddMarkerSeries", "AddLimitLineSeries",
+    "AddSeries", "AddMarkerSeries", "AddLimitLineSeries",
     "FillMarkerColumn", "FillMarkerColumnAtTime", "ApplyGeneratorSheetFormats",
     "LoadChartDisplayOptions", "ChartOpt", "EnsureChartOptionCheckboxes",
 }
 SHEETS_PROCS = {
-    "WriteGeneratorSheet", "FillMarkerColumn", "FillMarkerColumnAtTime",
-    "ApplyGeneratorSheetFormats", "WriteGeneratorChartSheet", "ApplyChartAxesFormat",
-    "GetRangeMinMaxByCols", "MaxAbsInCols", "WriteChartVerdictBlock", "FindChartEndRow",
-    "BuildStationAggregates", "BuildParoprovodSubAggregates", "SumPowerAtRow",
-    "BuildOneStationAggregate", "BuildOneStationAggregateEvent",
-    "AnnotateGeneratorRowsWithStationVerdict",
-    "StationSheetName", "StationChartSheetName", "WriteStationChartSheet",
+    "WriteGeneratorSheet",
     "WriteSummaryRow", "WriteSummaryInvalid", "WriteSummaryStationRow",
     "ApplySummaryConditionalFormat", "ApplyStatusCF", "WriteVersionStamp",
     "InitLog", "AppendLog", "FinalizeLog", "ValidateInputs",
-    "AddSeries", "AddMarkerSeries", "AddLimitLineSeries",
     "WriteProtocolSheet", "AddProtocolLine", "AddProtocolGenerator", "AddProtocolStation",
-    "EnsureChartOptionCheckboxes", "LoadChartDisplayOptions", "ChartOpt",
     "CollectOldOutputSheets", "DeleteOutputSheets",
     "GeneratorSheetName", "GeneratorChartSheetName",
 }
 
 PROC_RE = re.compile(r"^(Public |Private )(Sub |Function )([A-Za-z0-9_]+)")
+
+MODULE_ORDER = ["Common", "Engine", "Station", "Sheets", "Charts", "Monitor"]
 
 
 def split_master(text: str) -> dict[str, str]:
@@ -86,7 +83,7 @@ def split_master(text: str) -> dict[str, str]:
 
     idxs = [i for i, l in enumerate(lines) if PROC_RE.match(l)]
     idxs.append(len(lines))
-    buckets = {"Common": [], "Engine": [], "Sheets": [], "Charts": [], "Monitor": []}
+    buckets = {k: [] for k in MODULE_ORDER}
     for a, b in zip(idxs, idxs[1:]):
         name = PROC_RE.match(lines[a]).group(3)
         block = lines[a:b]
@@ -98,6 +95,8 @@ def split_master(text: str) -> dict[str, str]:
             buckets["Monitor"].append(block)
         elif name in ENGINE_PROCS:
             buckets["Engine"].append(block)
+        elif name in STATION_PROCS:
+            buckets["Station"].append(block)
         elif name in CHARTS_PROCS:
             buckets["Charts"].append(block)
         elif name in SHEETS_PROCS:
@@ -108,25 +107,28 @@ def split_master(text: str) -> dict[str, str]:
     headers = {
         "Common": "OPRCH_Common",
         "Engine": "OPRCH_Engine",
+        "Station": "OPRCH_Station",
         "Sheets": "OPRCH_Sheets",
         "Charts": "OPRCH_Charts",
         "Monitor": "OPRCH_Monitor",
     }
     notes = {
-        "Common": "Типы, константы, общие функции. Импортировать 1.",
-        "Engine": "Расчёт участия в ОПРЧ. Импортировать 2.",
-        "Sheets": "Summary, протокол, станционные листы. Импортировать 3.",
-        "Charts": "Графики генераторов и станции. Импортировать 4.",
-        "Monitor": "Точки входа AnalyzeOPRCH / SetupOPRCHTemplate. Импортировать 5.",
+        "Common": "Типы, константы, общие функции. Импорт 1.",
+        "Engine": "Расчёт генератора. Импорт 2.",
+        "Station": "Суммы станций (п. 4.2.10). Импорт 3.",
+        "Sheets": "Summary/Log/Протокол/листы генераторов. Импорт 4.",
+        "Charts": "Графики. Импорт 5.",
+        "Monitor": "Точки входа AnalyzeOPRCH. Импорт 6.",
     }
     out = {}
-    for key, attr in headers.items():
+    for key in MODULE_ORDER:
+        attr = headers[key]
         body = [
             f'Attribute VB_Name = "{attr}"',
             "Option Explicit",
             "",
             f"' {notes[key]}",
-            "' OPRCH_Monitor v1.8.0 — часть раздельного модуля (лимит VBA ~64 КБ на модуль).",
+            "' OPRCH_Monitor v1.8.2 — раздельный модуль (лимит VBA ~64 КБ).",
             "",
         ]
         if key == "Common":
@@ -137,10 +139,16 @@ def split_master(text: str) -> dict[str, str]:
             body.extend(block)
         text_out = "\n".join(body).rstrip() + "\n"
         out[key] = text_out
-        nbytes = len(text_out.encode("cp1251"))
-        print(f"{attr:16} lines={text_out.count(chr(10)):4}  cp1251={nbytes:6}")
-        if nbytes > 60000:
-            print("  WARN approaching 64K source")
+        slim = "\n".join(
+            ln for ln in text_out.splitlines()
+            if not (ln.lstrip().startswith("'") and not ln.lstrip().startswith("Attribute"))
+        ) + "\n"
+        nbytes = len(slim.replace("\n", "\r\n").encode("cp1251"))
+        print(f"{attr:16} lines={text_out.count(chr(10)):4}  win1251_slim={nbytes:6}")
+        if nbytes > 58000:
+            print("  WARN: close to 64K — риск отказа импорта")
+        if nbytes > 64000:
+            raise SystemExit(f"{attr} slim > 64K ({nbytes}) — нужно дробить дальше")
     return out
 
 
@@ -148,12 +156,15 @@ def write_bas(modules: dict[str, str]) -> list[Path]:
     mapping = {
         "Common": "OPRCH_Common.bas",
         "Engine": "OPRCH_Engine.bas",
+        "Station": "OPRCH_Station.bas",
         "Sheets": "OPRCH_Sheets.bas",
         "Charts": "OPRCH_Charts.bas",
         "Monitor": "OPRCH_Monitor.bas",
     }
+    # удалить устаревшие одиночные большие файлы при пересборке
     win_paths = []
-    for key, name in mapping.items():
+    for key in MODULE_ORDER:
+        name = mapping[key]
         utf = modules[key]
         (ROOT / name).write_text(utf, encoding="utf-8")
         slim_lines = []
@@ -171,46 +182,12 @@ def write_bas(modules: dict[str, str]) -> list[Path]:
     return win_paths
 
 
-NS = {"m": "http://purl.oclc.org/ooxml/spreadsheetml/main"}
-
-
-def col_row(cell_ref):
-    m = re.match(r"([A-Z]+)(\d+)", cell_ref)
-    col, row = m.group(1), int(m.group(2))
-    n = 0
-    for ch in col:
-        n = n * 26 + (ord(ch) - 64)
-    return n, row
-
-
-def parse_time(v):
-    if v is None:
-        return None
-    s = str(v).strip()
-    if not s:
-        return None
-    if "T" in s:
-        s = s.replace("Z", "")
-        if "." in s:
-            a, b = s.split(".", 1)
-            b = re.sub(r"[^0-9].*", "", b)[:6]
-            s = a + "." + b if b else a
-        try:
-            return datetime.fromisoformat(s)
-        except Exception:
-            return None
-    try:
-        return datetime(1899, 12, 30) + timedelta(days=float(s))
-    except Exception:
-        return None
-
-
 def load_raw_from_template() -> list[dict]:
     src = ROOT / "Шаблон_мониторинг_ОПРЧ.xlsx"
     if not src.exists():
         src = ROOT / "Шаблон_мониторинг_ОПРЧ_ВТЭЦ-2_31.10.2026.xlsx"
     if not src.exists():
-        src = Path("/Users/asavinov/Downloads/Шаблон_мониторинг ОПРЧ.xlsx")
+        raise FileNotFoundError("Нет шаблона с демо-данными RawData")
     wb = load_workbook(src, data_only=True)
     ws = wb["RawData"]
     rows = []
@@ -219,9 +196,7 @@ def load_raw_from_template() -> list[dict]:
         if t is None:
             continue
         if not isinstance(t, datetime):
-            t = parse_time(t)
-            if t is None:
-                continue
+            continue
         rec = {
             "t": t.replace(microsecond=0) if hasattr(t, "replace") else t,
             "f": ws.cell(r, 2).value,
@@ -255,38 +230,19 @@ def rebuild_xlsx(rows: list[dict]) -> Path:
         bottom=Side(style="thin", color="B0B0B0"),
     )
 
-    # Инструкция (универсальный шаблон; без вкладки «Запрос»)
     lines = [
-        ("Мониторинг ОПРЧ v1.8.1 — универсальный шаблон (любая станция / любое событие)", True, 14),
+        ("Мониторинг ОПРЧ v1.8.2 — готовый шаблон (любая станция / любое событие)", True, 14),
         ("", False, 11),
-        ("0. КАК ПОЛЬЗОВАТЬСЯ", True, 12),
-        ("Программа не привязана к одной электростанции. Для каждого события заполните RawData и Config.", False, 11),
-        ("Вкладки «Запрос» нет: код запроса к ОИК храните отдельно; в книгу — только ряды измерений и параметры.", False, 11),
-        ("", False, 11),
-        ("1. ИСХОДНЫЕ ДАННЫЕ", True, 12),
-        ("• RawData: «Время» (шаг ≤ 5 с) + частота + мощности генераторов. Имена колонок — любые, совпадение с Config.", False, 11),
-        ("• Окно по п. 3.1 МУ: желательно ≥ 5 мин до отклонения и до возврата в 50±0.1 Гц > 5 мин.", False, 11),
-        ("• Config: станция, генератор, колонки P/f, тип, Pном, S, fнч, РМ, компоновка. Пресеты — кнопка на Config.", False, 11),
-        ("• W/X: режим Авария/Испытание, fном, автопоиск, строгий дефицит (W17).", False, 11),
-        ("", False, 11),
-        ("2. ОДИН ЗАПУСК = ВСЁ СРАЗУ", True, 12),
-        ("«Запустить мониторинг ОПРЧ» — количественная и качественная оценка вместе.", False, 11),
-        ("", False, 11),
-        ("3. РЕЖИМЫ (Config W13)", True, 12),
-        ("• Авария — Прил. 14. Без РМ: S=6 %, fнч=0.15. Дефицит в периоде → НАРУШЕНИЕ. t5/t10 справочно.", False, 11),
-        ("• Испытание — Прил. 1. Несданные t5/t10 → НАРУШЕНИЕ.", False, 11),
-        ("", False, 11),
-        ("4. ЗАПУСК", True, 12),
-        ("Сохраните как .xlsm → InstallOPRCHMacros (или импорт *_win1251.bas) → AnalyzeOPRCH.", False, 11),
-        ("Не запускайте SetupOPRCHTemplate на заполненной книге.", False, 11),
-        ("В RawData/Config ниже — демо-пример; замените своими данными станции и события.", False, 11),
+        ("Откройте этот файл как .xlsm с уже вшитыми макросами (Шаблон_мониторинг_ОПРЧ.xlsm).", False, 11),
+        ("Подставьте свои данные в RawData и Config → кнопка «Запустить мониторинг ОПРЧ».", False, 11),
+        ("Вкладки «Запрос» нет. Один запуск = колич. + кач. сразу.", False, 11),
+        ("Режим Config W13: Авария (Прил. 14) / Испытание (Прил. 1).", False, 11),
     ]
     for i, (txt, bold, size) in enumerate(lines, 1):
         cell = wsInstr.cell(i, 1, txt)
         cell.font = Font(bold=bold, size=size)
-    wsInstr.column_dimensions["A"].width = 130
+    wsInstr.column_dimensions["A"].width = 120
 
-    # Демо-ряды (пример); для продакшена пользователь подставляет свои станции/события
     headers = ["Время", "f ВТЭЦ-2", "ТГ-1", "ТГ-3", "ТГ-4", "ТГ-7"]
     for i, h in enumerate(headers, 1):
         cell = wsRaw.cell(1, i, h)
@@ -383,12 +339,11 @@ def rebuild_xlsx(rows: list[dict]) -> Path:
         wsCfg.cell(i, 37, 1)
         wsCfg.cell(i, 38, 0 if name == "Резерв" else 1)
 
-    wsCfg["W19"] = "Универсальный шаблон v1.8.1"
+    wsCfg["W19"] = "Готовый .xlsm v1.8.2 — макросы внутри"
     wsCfg["W19"].font = hdr_font
-    wsCfg["W20"] = "Любая станция / любое событие: подставьте свои ряды в RawData и строки в Config."
-    wsCfg["W21"] = "Сохраните как .xlsm → OPRCH_Install_win1251.bas → InstallOPRCHMacros."
+    wsCfg["W20"] = "Любая станция/событие: замените RawData и Config."
+    wsCfg["W21"] = "Кнопка «Запустить мониторинг ОПРЧ» или Alt+F8 → AnalyzeOPRCH."
     wsCfg["W22"] = "НЕ запускать SetupOPRCHTemplate — сотрёт данные."
-    wsCfg["W23"] = "Демо ниже можно заменить. Вкладки «Запрос» в книге нет."
 
     for col in range(1, 39):
         wsCfg.column_dimensions[get_column_letter(col)].width = 14
@@ -396,8 +351,8 @@ def rebuild_xlsx(rows: list[dict]) -> Path:
     wsCfg.column_dimensions["E"].width = 16
     wsCfg.column_dimensions["W"].width = 55
 
-    wsSum["A1"] = "После запуска AnalyzeOPRCH здесь появится сводная таблица."
-    wsLog["A1"] = "Журнал появится после запуска AnalyzeOPRCH."
+    wsSum["A1"] = "После AnalyzeOPRCH здесь сводная таблица."
+    wsLog["A1"] = "Журнал появится после AnalyzeOPRCH."
 
     out = ROOT / "Шаблон_мониторинг_ОПРЧ.xlsx"
     wb.save(out)
@@ -407,8 +362,7 @@ def rebuild_xlsx(rows: list[dict]) -> Path:
         for info in zin.infolist():
             data = zin.read(info.filename)
             if info.filename == "xl/workbook.xml":
-                s = data.decode("utf-8").replace("<workbookProtection/>", "")
-                data = s.encode("utf-8")
+                data = data.decode("utf-8").replace("<workbookProtection/>", "").encode("utf-8")
             elif info.filename == "docProps/app.xml":
                 data = (
                     '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
@@ -423,89 +377,118 @@ def rebuild_xlsx(rows: list[dict]) -> Path:
     return out
 
 
-def build_xlsm_via_excel(xlsx: Path, win_bas: list[Path]) -> Path | None:
-    """Save as xlsm and import VBA modules through Microsoft Excel AppleScript."""
-    xlsm = xlsx.with_suffix(".xlsm")
+def build_xlsm_with_macros(xlsx: Path, modules: dict[str, str] | None = None) -> Path:
+    """Собрать готовый .xlsm: данные из xlsx + VBA через pyOpenVBA (без Excel SaveAs)."""
+    from pyopenvba import ExcelFile
+
+    xlsm = ROOT / "Шаблон_мониторинг_ОПРЧ.xlsm"
+    shell = Path("/tmp/oprch_vba_shell.xlsm")
+    if shell.exists():
+        shell.unlink()
     if xlsm.exists():
         xlsm.unlink()
 
-    # Escape paths for AppleScript
-    def aq(p: Path) -> str:
-        return str(p).replace("\\", "\\\\").replace('"', '\\"')
+    names = [f"OPRCH_{m}" for m in MODULE_ORDER]
+    ef = ExcelFile.create_new(shell)
+    proj = ef.vba_project()
+    for drop in ("Module1", "Sheet1"):
+        if drop in proj.module_names():
+            try:
+                proj.delete_module(drop)
+            except Exception as e:
+                print("warn delete", drop, e)
 
-    import_lines = "\n".join(
-        f'      do Visual Basic "ThisWorkbook.VBProject.VBComponents.Import \\"{aq(p)}\\""'
-        for p in win_bas
-    )
+    for name in names:
+        utf = ROOT / f"{name}.bas"
+        if not utf.exists():
+            raise FileNotFoundError(utf)
+        src = utf.read_text("utf-8").replace("\r\n", "\n").replace("\r", "\n")
+        if "Attribute VB_Name" not in "\n".join(src.splitlines()[:3]):
+            src = f'Attribute VB_Name = "{name}"\n' + src
+        print(f"embed {name}: {len(src)} chars")
+        proj.add_module(name, src)
+    ef.save()
 
-    script = f'''
-tell application "Microsoft Excel"
-  activate
-  set wb to open workbook workbook file name "{aq(xlsx)}"
-  delay 1
-  set dest to "{aq(xlsm)}"
-  save workbook as wb filename dest file format Excel macro enabled workbook file format with overwrite
-  close wb saving no
-  delay 1
-  set wb2 to open workbook workbook file name dest
-  delay 1
-  try
-{import_lines}
-    do Visual Basic "Application.Run \\"WriteInstructionSheet\\""
-  on error errMsg
-    -- Trust access to VBA project may be off
-    display dialog "VBA import failed: " & errMsg buttons {{"OK"}}
-  end try
-  save workbook wb2
-  -- leave open for user, or close:
-  -- close wb2 saving yes
-end tell
-'''
-    script_path = ROOT / "_build_xlsm.applescript"
-    script_path.write_text(script, encoding="utf-8")
-    print("Running Excel AppleScript to build xlsm...")
-    try:
-        r = subprocess.run(
-            ["osascript", str(script_path)],
-            capture_output=True,
-            text=True,
-            timeout=180,
+    with ZipFile(shell, "r") as z:
+        vba = z.read("xl/vbaProject.bin")
+    print("vbaProject.bin", len(vba))
+
+    def patch_ct(data: bytes) -> bytes:
+        s = data.decode("utf-8")
+        s = s.replace(
+            'ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"',
+            'ContentType="application/vnd.ms-excel.sheet.macroEnabled.main+xml"',
         )
-        print("osascript rc=", r.returncode)
-        if r.stdout:
-            print("stdout:", r.stdout[:500])
-        if r.stderr:
-            print("stderr:", r.stderr[:800])
-    except Exception as e:
-        print("AppleScript failed:", e)
-        return None
+        if "vbaProject" not in s:
+            s = s.replace(
+                "</Types>",
+                '<Override PartName="/xl/vbaProject.bin" '
+                'ContentType="application/vnd.ms-office.vbaProject"/></Types>',
+            )
+        return s.encode("utf-8")
 
-    if xlsm.exists() and xlsm.stat().st_size > 10000:
-        # Check if vbaProject.bin present
-        try:
-            with ZipFile(xlsm) as z:
-                has_vba = "xl/vbaProject.bin" in z.namelist()
-            print("xlsm created", xlsm, "size", xlsm.stat().st_size, "has_vba", has_vba)
-            return xlsm if has_vba else xlsm
-        except Exception as e:
-            print("xlsm zip check failed", e)
-            return xlsm
-    print("xlsm not created or too small")
-    return None
+    def patch_rels(data: bytes) -> bytes:
+        s = data.decode("utf-8")
+        if "vbaProject" in s:
+            return data
+        ids = [int(x) for x in re.findall(r'Id="rId(\d+)"', s)]
+        nid = (max(ids) + 1) if ids else 1
+        rel = (
+            f'<Relationship Id="rId{nid}" '
+            'Type="http://schemas.microsoft.com/office/2006/relationships/vbaProject" '
+            'Target="vbaProject.bin"/>'
+        )
+        return s.replace("</Relationships>", rel + "</Relationships>").encode("utf-8")
+
+    with ZipFile(xlsx, "r") as zin, ZipFile(xlsm, "w", compression=zipfile.ZIP_DEFLATED) as zout:
+        for info in zin.infolist():
+            data = zin.read(info.filename)
+            if info.filename == "[Content_Types].xml":
+                data = patch_ct(data)
+            elif info.filename == "xl/_rels/workbook.xml.rels":
+                data = patch_rels(data)
+            zout.writestr(info, data)
+        zout.writestr("xl/vbaProject.bin", vba)
+
+    check = ExcelFile(xlsm)
+    missing = [n for n in names if n not in check.module_names()]
+    if missing:
+        raise RuntimeError(f"В xlsm нет модулей: {missing}")
+    with ZipFile(xlsm) as z:
+        vsz = z.getinfo("xl/vbaProject.bin").file_size
+    print("xlsm ready", xlsm, xlsm.stat().st_size, "vba", vsz, "modules", check.module_names())
+    if vsz < 20000:
+        raise RuntimeError("vbaProject.bin слишком мал")
+    return xlsm
 
 
 def main():
     text = MASTER.read_text("utf-8")
-    if 'OPRCH_VERSION As String = "1.8.1"' not in text and 'OPRCH_VERSION As String = "1.8.0"' not in text:
-        raise SystemExit("Master is not v1.8.x")
+    # bump version stamp in comment if needed
+    if 'OPRCH_VERSION As String = "1.8.1"' in text:
+        text = text.replace('OPRCH_VERSION As String = "1.8.1"', 'OPRCH_VERSION As String = "1.8.2"')
+        text = text.replace("' Версия: 1.8.1", "' Версия: 1.8.2")
+        MASTER.write_text(text, encoding="utf-8")
+    elif 'OPRCH_VERSION As String = "1.8.2"' not in text:
+        raise SystemExit("Unexpected version in master")
+
+    # syntax sanity: unmatched quotes in slim is hard; check basic patterns
+    for bad in ["\u0394", "\u2192", "\u2248", "\u2264", "\u2265"]:
+        if bad in text:
+            raise SystemExit(f"Non-cp1251 char {bad!r} in master")
+
     modules = split_master(text)
-    win_bas = write_bas(modules)
+    write_bas(modules)
+    # Installer win1251 (на случай ручной переустановки)
+    inst = (ROOT / "OPRCH_Install.bas").read_text("utf-8")
+    (ROOT / "OPRCH_Install_win1251.bas").write_bytes(
+        inst.replace("\n", "\r\n").encode("cp1251")
+    )
     rows = load_raw_from_template()
-    print("raw rows", len(rows), rows[0]["t"], rows[-1]["t"])
+    print("raw rows", len(rows))
     xlsx = rebuild_xlsx(rows)
-    xlsm = build_xlsm_via_excel(xlsx, win_bas)
-    print("DONE xlsx=", xlsx)
-    print("DONE xlsm=", xlsm)
+    xlsm = build_xlsm_with_macros(xlsx)
+    print("DONE", xlsm)
 
 
 if __name__ == "__main__":
