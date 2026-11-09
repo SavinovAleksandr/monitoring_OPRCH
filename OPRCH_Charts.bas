@@ -468,33 +468,33 @@ End Sub
 
 Public Sub LoadChartDisplayOptions(ByVal wsCfg As Worksheet)
     Dim r As Long
-    Set m_ChartOpts = CreateObject("Scripting.Dictionary")
+    Set m_ChartOpts = MapNew()
     For r = 3 To 10
-        m_ChartOpts("REL_" & CStr(r)) = (NzD(wsCfg.Cells(r, 37).Value, 1) <> 0) ' AK
-        m_ChartOpts("ABS_" & CStr(r)) = (NzD(wsCfg.Cells(r, 38).Value, 1) <> 0) ' AL
+        MapSet m_ChartOpts, "REL_" & CStr(r), (NzD(wsCfg.Cells(r, 37).Value, 1) <> 0) ' AK
+        MapSet m_ChartOpts, "ABS_" & CStr(r), (NzD(wsCfg.Cells(r, 38).Value, 1) <> 0) ' AL
     Next r
     ' Row mapping: 3 Pfact, 4 Preq, 5 Tol+, 6 Tol-, 7 Limits, 8 Freq, 9 Markers
-    m_ChartOpts("REL_PFACT") = m_ChartOpts("REL_3")
-    m_ChartOpts("REL_PREQ") = m_ChartOpts("REL_4")
-    m_ChartOpts("REL_TOL_P") = m_ChartOpts("REL_5")
-    m_ChartOpts("REL_TOL_M") = m_ChartOpts("REL_6")
-    m_ChartOpts("REL_LIMITS") = m_ChartOpts("REL_7")
-    m_ChartOpts("REL_FREQ") = m_ChartOpts("REL_8")
-    m_ChartOpts("REL_MARKERS") = m_ChartOpts("REL_9")
-    m_ChartOpts("ABS_PFACT") = m_ChartOpts("ABS_3")
-    m_ChartOpts("ABS_PREQ") = m_ChartOpts("ABS_4")
-    m_ChartOpts("ABS_TOL_P") = m_ChartOpts("ABS_5")
-    m_ChartOpts("ABS_TOL_M") = m_ChartOpts("ABS_6")
-    m_ChartOpts("ABS_LIMITS") = m_ChartOpts("ABS_7")
-    m_ChartOpts("ABS_FREQ") = m_ChartOpts("ABS_8")
-    m_ChartOpts("ABS_MARKERS") = m_ChartOpts("ABS_9")
+    MapSet m_ChartOpts, "REL_PFACT", MapGet(m_ChartOpts, "REL_3")
+    MapSet m_ChartOpts, "REL_PREQ", MapGet(m_ChartOpts, "REL_4")
+    MapSet m_ChartOpts, "REL_TOL_P", MapGet(m_ChartOpts, "REL_5")
+    MapSet m_ChartOpts, "REL_TOL_M", MapGet(m_ChartOpts, "REL_6")
+    MapSet m_ChartOpts, "REL_LIMITS", MapGet(m_ChartOpts, "REL_7")
+    MapSet m_ChartOpts, "REL_FREQ", MapGet(m_ChartOpts, "REL_8")
+    MapSet m_ChartOpts, "REL_MARKERS", MapGet(m_ChartOpts, "REL_9")
+    MapSet m_ChartOpts, "ABS_PFACT", MapGet(m_ChartOpts, "ABS_3")
+    MapSet m_ChartOpts, "ABS_PREQ", MapGet(m_ChartOpts, "ABS_4")
+    MapSet m_ChartOpts, "ABS_TOL_P", MapGet(m_ChartOpts, "ABS_5")
+    MapSet m_ChartOpts, "ABS_TOL_M", MapGet(m_ChartOpts, "ABS_6")
+    MapSet m_ChartOpts, "ABS_LIMITS", MapGet(m_ChartOpts, "ABS_7")
+    MapSet m_ChartOpts, "ABS_FREQ", MapGet(m_ChartOpts, "ABS_8")
+    MapSet m_ChartOpts, "ABS_MARKERS", MapGet(m_ChartOpts, "ABS_9")
 End Sub
 
 Public Function ChartOpt(ByVal key As String, ByVal fallback As Boolean) As Boolean
     If m_ChartOpts Is Nothing Then
         ChartOpt = fallback
-    ElseIf m_ChartOpts.Exists(key) Then
-        ChartOpt = CBool(m_ChartOpts(key))
+    ElseIf MapExists(m_ChartOpts, key) Then
+        ChartOpt = CBool(MapGet(m_ChartOpts, key))
     Else
         ChartOpt = fallback
     End If

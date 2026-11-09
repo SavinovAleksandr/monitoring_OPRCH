@@ -7,18 +7,18 @@ Public Sub BuildStationAggregates(ByVal wsRaw As Worksheet, ByVal wsCfg As Works
     Dim cfgLast As Long, r As Long
     Dim g As TGenCfg
     Dim stations As Collection, key As Variant
-    Dim done As Object
+    Dim done As Collection
 
     cfgLast = LastUsedRow(wsCfg)
     Set stations = New Collection
-    Set done = CreateObject("Scripting.Dictionary")
+    Set done = MapNew()
 
     For r = 2 To cfgLast
         If Len(Trim$(CStr(wsCfg.Cells(r, 2).Value))) = 0 Then GoTo NX
         g = ReadGenCfgEff(wsCfg, r, st)
         If g.Enabled And g.InStationSum And Len(g.Station) > 0 Then
-            If Not done.Exists(g.Station) Then
-                done(g.Station) = 1
+            If Not MapExists(done, g.Station) Then
+                MapSet done, g.Station, 1
                 stations.Add g.Station
             End If
         End If
@@ -35,29 +35,25 @@ Public Sub BuildParoprovodSubAggregates(ByVal wsRaw As Worksheet, ByVal wsCfg As
                                          ByVal stationName As String, ByRef st As TSettings, ByRef outRow As Long)
     Dim cfgLast As Long, r As Long
     Dim g As TGenCfg
-    Dim paropipes As Object, p As Variant
+    Dim pipeNames As Collection, p As Variant
 
-    Set paropipes = CreateObject("Scripting.Dictionary")
+    Set pipeNames = New Collection
     cfgLast = LastUsedRow(wsCfg)
     For r = 2 To cfgLast
         If Len(Trim$(CStr(wsCfg.Cells(r, 2).Value))) = 0 Then GoTo NX
         g = ReadGenCfgEff(wsCfg, r, st)
         If g.Enabled And g.InStationSum And StationMatch(g.Station, stationName) Then
             If Len(g.Paroprovod) > 0 Then
-                If paropipes.Exists(g.Paroprovod) Then
-                    paropipes(g.Paroprovod) = paropipes(g.Paroprovod) + 1
-                Else
-                    paropipes(g.Paroprovod) = 1
-                End If
+                On Error Resume Next
+                pipeNames.Add g.Paroprovod, g.Paroprovod
+                On Error GoTo 0
             End If
         End If
 NX:
     Next r
 
-    For Each p In paropipes.Keys
-        If paropipes(p) >= 1 Then
-            BuildOneStationAggregate wsRaw, wsCfg, wsSummary, stationName, CStr(p), st, outRow
-        End If
+    For Each p In pipeNames
+        BuildOneStationAggregate wsRaw, wsCfg, wsSummary, stationName, CStr(p), st, outRow
     Next p
 End Sub
 

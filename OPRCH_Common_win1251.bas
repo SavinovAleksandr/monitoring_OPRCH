@@ -3,7 +3,7 @@ Option Explicit
 
 
 
-Public Const OPRCH_VERSION As String = "1.8.2"
+Public Const OPRCH_VERSION As String = "1.8.3"
 
 Public Const SH_RAW As String = "RawData"
 Public Const SH_CFG As String = "Config"
@@ -31,8 +31,9 @@ Public Const H15_REF As Double = 0.3              ' ориентир для h(15 с) (Прилож
 Public Const EVENT_MIN_OUTSIDE_SEC As Double = 5# ' фильтр коротких выбросов частоты при поиске событий
 
 Public m_LogRow As Long
-Public m_KdProfiles As Object   ' key=EQUIPTYPE, value=Array(t0,kd0,t1,kd1,t2,kd2,t3,kd3)
-Public m_ChartOpts As Object    ' key=REL_*/ABS_*, value=Boolean
+Public m_KdProfiles As Collection   ' key=EQUIPTYPE, value=Array(t0,kd0,...)
+Public m_KdProfileKeys As Collection
+Public m_ChartOpts As Collection    ' key=REL_*/ABS_*, value=Boolean
 Public m_Protocol As Collection ' строки текстового протокола (лист «Протокол»)
 
 Public Type TSettings
@@ -203,6 +204,32 @@ Public Type TStationResult
     TrQuasiSteady As Boolean
     F0 As Double
 End Type
+
+
+Public Function MapNew() As Collection
+    Set MapNew = New Collection
+End Function
+
+Public Function MapExists(ByVal m As Collection, ByVal key As String) As Boolean
+    Dim tmp As Variant
+    If m Is Nothing Then Exit Function
+    On Error Resume Next
+    tmp = m.Item(CStr(key))
+    MapExists = (Err.Number = 0)
+    Err.Clear
+    On Error GoTo 0
+End Function
+
+Public Function MapGet(ByVal m As Collection, ByVal key As String) As Variant
+    MapGet = m.Item(CStr(key))
+End Function
+
+Public Sub MapSet(ByVal m As Collection, ByVal key As String, ByVal val As Variant)
+    On Error Resume Next
+    m.Remove CStr(key)
+    On Error GoTo 0
+    m.Add Item:=val, Key:=CStr(key)
+End Sub
 
 
 Public Function PReqCalc(ByVal sPct As Double, ByVal pNom As Double, ByVal fNom As Double, _
@@ -644,7 +671,8 @@ Public Sub LoadKdProfiles(ByVal wsCfg As Worksheet)
     Dim et As String
     Dim t0 As Double, t1 As Double, t2 As Double, t3 As Double
     Dim kd0 As Double, kd1 As Double, kd2 As Double, kd3 As Double
-    Set m_KdProfiles = CreateObject("Scripting.Dictionary")
+    Set m_KdProfiles = MapNew()
+    Set m_KdProfileKeys = New Collection
     lastR = LastUsedRow(wsCfg)
     For r = 3 To lastR
         et = UCase$(Trim$(CStr(wsCfg.Cells(r, 27).Value)))
@@ -657,7 +685,12 @@ Public Sub LoadKdProfiles(ByVal wsCfg As Worksheet)
         kd2 = NzD(wsCfg.Cells(r, 33).Value, -1)
         t3 = NzD(wsCfg.Cells(r, 34).Value, 0)
         kd3 = NzD(wsCfg.Cells(r, 35).Value, -1)
-        m_KdProfiles(et) = Array(t0, kd0, t1, kd1, t2, kd2, t3, kd3)
+        If Not MapExists(m_KdProfiles, et) Then
+            On Error Resume Next
+            m_KdProfileKeys.Add et, et
+            On Error GoTo 0
+        End If
+        MapSet m_KdProfiles, et, Array(t0, kd0, t1, kd1, t2, kd2, t3, kd3)
 NX:
     Next r
 End Sub
@@ -697,20 +730,20 @@ Public Function ResolveKdKey(ByVal equipType As String) As String
     key = UCase$(Trim$(equipType))
     ResolveKdKey = key
     If m_KdProfiles Is Nothing Then Exit Function
-    If m_KdProfiles.Exists(key) Then Exit Function
-    If InStr(key, "ГПА") > 0 And m_KdProfiles.Exists("ГПА") Then ResolveKdKey = "ГПА": Exit Function
-    If InStr(key, "ГТУ") > 0 And m_KdProfiles.Exists("ГТУ") Then ResolveKdKey = "ГТУ": Exit Function
-    If (InStr(key, "ПГУ") > 0 And (InStr(key, "СБРОС") > 0 Or InStr(key, "ПАРАЛ") > 0)) And m_KdProfiles.Exists("ПГУ_СБРОСН") Then
+    If MapExists(m_KdProfiles, key) Then Exit Function
+    If InStr(key, "ГПА") > 0 And MapExists(m_KdProfiles, "ГПА") Then ResolveKdKey = "ГПА": Exit Function
+    If InStr(key, "ГТУ") > 0 And MapExists(m_KdProfiles, "ГТУ") Then ResolveKdKey = "ГТУ": Exit Function
+    If (InStr(key, "ПГУ") > 0 And (InStr(key, "СБРОС") > 0 Or InStr(key, "ПАРАЛ") > 0)) And MapExists(m_KdProfiles, "ПГУ_СБРОСН") Then
         ResolveKdKey = "ПГУ_СБРОСН": Exit Function
     End If
-    If InStr(key, "ПГУ") > 0 And m_KdProfiles.Exists("ПГУ_УТИЛ") Then ResolveKdKey = "ПГУ_УТИЛ": Exit Function
-    If (InStr(key, "НЕБЛОК") > 0 Or InStr(key, "ОБЩ") > 0) And m_KdProfiles.Exists("ПТУ_НЕБЛОК") Then
+    If InStr(key, "ПГУ") > 0 And MapExists(m_KdProfiles, "ПГУ_УТИЛ") Then ResolveKdKey = "ПГУ_УТИЛ": Exit Function
+    If (InStr(key, "НЕБЛОК") > 0 Or InStr(key, "ОБЩ") > 0) And MapExists(m_KdProfiles, "ПТУ_НЕБЛОК") Then
         ResolveKdKey = "ПТУ_НЕБЛОК": Exit Function
     End If
-    If (InStr(key, "УГОЛЬ") > 0 Or InStr(key, "ПЫЛЕУГ") > 0) And m_KdProfiles.Exists("ПТУ_БЛОК_УГОЛЬ") Then
+    If (InStr(key, "УГОЛЬ") > 0 Or InStr(key, "ПЫЛЕУГ") > 0) And MapExists(m_KdProfiles, "ПТУ_БЛОК_УГОЛЬ") Then
         ResolveKdKey = "ПТУ_БЛОК_УГОЛЬ": Exit Function
     End If
-    If (InStr(key, "ПТУ") > 0 Or InStr(key, "ПСУ") > 0 Or InStr(key, "БЛОК") > 0) And m_KdProfiles.Exists("ПТУ_БЛОК") Then
+    If (InStr(key, "ПТУ") > 0 Or InStr(key, "ПСУ") > 0 Or InStr(key, "БЛОК") > 0) And MapExists(m_KdProfiles, "ПТУ_БЛОК") Then
         ResolveKdKey = "ПТУ_БЛОК": Exit Function
     End If
 End Function
@@ -719,10 +752,10 @@ Public Function DynamicKdByTime(ByVal equipType As String, ByVal tSec As Double)
     Dim prof As Variant, key As String
     If m_KdProfiles Is Nothing Then Err.Raise vbObjectError + 2401, , "Профили Kд(t) не загружены."
     key = ResolveKdKey(equipType)
-    If Not m_KdProfiles.Exists(key) Then
+    If Not MapExists(m_KdProfiles, key) Then
         Err.Raise vbObjectError + 2402, , "Для типа '" & equipType & "' не задан профиль Kд(t) в Config (AA:AI)."
     End If
-    prof = m_KdProfiles(key)
+    prof = MapGet(m_KdProfiles, key)
     DynamicKdByTime = ClampKd(EvalKdAbs(tSec, prof))
 End Function
 
@@ -734,11 +767,11 @@ Public Function KdProfileText(ByVal equipType As String) As String
         Exit Function
     End If
     key = ResolveKdKey(equipType)
-    If Not m_KdProfiles.Exists(key) Then
+    If Not MapExists(m_KdProfiles, key) Then
         KdProfileText = "Config: профиль для типа '" & equipType & "' не задан"
         Exit Function
     End If
-    prof = m_KdProfiles(key)
+    prof = MapGet(m_KdProfiles, key)
     KdProfileText = src & ": t0=" & Format(prof(0), "0") & "с Kд0=" & Format(prof(1), "0.00") & _
                     "; t1=" & Format(prof(2), "0") & "с Kд1=" & Format(prof(3), "0.00") & _
                     "; t2=" & Format(prof(4), "0") & "с Kд2=" & Format(prof(5), "0.00") & _

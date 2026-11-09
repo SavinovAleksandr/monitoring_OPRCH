@@ -389,8 +389,20 @@ def build_xlsm_with_macros(xlsx: Path, modules: dict[str, str] | None = None) ->
         xlsm.unlink()
 
     names = [f"OPRCH_{m}" for m in MODULE_ORDER]
+
+    def _module_src(name: str) -> str:
+        utf = ROOT / f"{name}.bas"
+        if not utf.exists():
+            raise FileNotFoundError(utf)
+        src = utf.read_text("utf-8").replace("\r\n", "\n").replace("\r", "\n")
+        if "Attribute VB_Name" not in "\n".join(src.splitlines()[:3]):
+            src = f'Attribute VB_Name = "{name}"\n' + src
+        return src
+
     ef = ExcelFile.create_new(shell)
     proj = ef.vba_project()
+    # Русский исходник должен кодироваться как Windows-1251.
+    proj.code_page = 1251
     for drop in ("Module1", "Sheet1"):
         if drop in proj.module_names():
             try:
@@ -399,19 +411,38 @@ def build_xlsm_with_macros(xlsx: Path, modules: dict[str, str] | None = None) ->
                 print("warn delete", drop, e)
 
     for name in names:
-        utf = ROOT / f"{name}.bas"
-        if not utf.exists():
-            raise FileNotFoundError(utf)
-        src = utf.read_text("utf-8").replace("\r\n", "\n").replace("\r", "\n")
-        if "Attribute VB_Name" not in "\n".join(src.splitlines()[:3]):
-            src = f'Attribute VB_Name = "{name}"\n' + src
+        src = _module_src(name)
         print(f"embed {name}: {len(src)} chars")
         proj.add_module(name, src)
     ef.save()
 
+    # pyOpenVBA оставляет в DIR code page 1252 от шаблона — из‑за этого Excel Mac
+    # показывает «An error occurred while loading 'OPRCH_Sheets'». Патчим DIR и
+    # перезаписываем исходники уже при code_page=1251.
+    ef = ExcelFile(shell)
+    proj = ef.vba_project()
+    d = bytearray(proj.dir_raw)
+    needle = b"\x03\x00\x02\x00\x00\x00"  # PROJECTCODEPAGE
+    idx = d.find(needle)
+    if idx < 0:
+        raise RuntimeError("В vbaProject не найден PROJECTCODEPAGE")
+    d[idx + 6 : idx + 8] = (1251).to_bytes(2, "little")
+    proj.dir_raw = bytes(d)
+    proj.code_page = 1251
+    proj.dir_structure_dirty = True
+    for name in names:
+        ef.set_module(name, _module_src(name))
+    ef.save()
+
+    check0 = ExcelFile(shell)
+    if check0.vba_project().code_page != 1251:
+        raise RuntimeError(f"code_page={check0.vba_project().code_page}, ожидался 1251")
+    if "Авария" not in check0.get_module("OPRCH_Sheets"):
+        raise RuntimeError("Кириллица в OPRCH_Sheets повреждена при сборке xlsm")
+
     with ZipFile(shell, "r") as z:
         vba = z.read("xl/vbaProject.bin")
-    print("vbaProject.bin", len(vba))
+    print("vbaProject.bin", len(vba), "code_page", check0.vba_project().code_page)
 
     def patch_ct(data: bytes) -> bytes:
         s = data.decode("utf-8")
@@ -465,11 +496,11 @@ def build_xlsm_with_macros(xlsx: Path, modules: dict[str, str] | None = None) ->
 def main():
     text = MASTER.read_text("utf-8")
     # bump version stamp in comment if needed
-    if 'OPRCH_VERSION As String = "1.8.1"' in text:
-        text = text.replace('OPRCH_VERSION As String = "1.8.1"', 'OPRCH_VERSION As String = "1.8.2"')
-        text = text.replace("' Версия: 1.8.1", "' Версия: 1.8.2")
+    if 'OPRCH_VERSION As String = "1.8.2"' in text:
+        text = text.replace('OPRCH_VERSION As String = "1.8.2"', 'OPRCH_VERSION As String = "1.8.3"')
+        text = text.replace("' Версия: 1.8.2", "' Версия: 1.8.3")
         MASTER.write_text(text, encoding="utf-8")
-    elif 'OPRCH_VERSION As String = "1.8.2"' not in text:
+    elif 'OPRCH_VERSION As String = "1.8.3"' not in text:
         raise SystemExit("Unexpected version in master")
 
     # syntax sanity: unmatched quotes in slim is hard; check basic patterns

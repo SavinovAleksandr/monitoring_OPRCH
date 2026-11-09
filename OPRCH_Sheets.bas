@@ -613,7 +613,7 @@ End Sub
 Public Sub ValidateInputs(ByVal wsRaw As Worksheet, ByVal wsCfg As Worksheet, ByRef st As TSettings, ByVal timeCol As Long)
     Dim lastR As Long, r As Long, prev As Double, cur As Double, gap As Double, maxGap As Double
     Dim cfgLast As Long, g As TGenCfg, headerRow As Long
-    Dim paropipes As Object, stationParopipe As Object, st2 As String, kk As Variant
+    Dim stationParopipe As Collection, st2 As String, kk As Variant
 
     ' RawData: шаг
     lastR = LastUsedRow(wsRaw)
@@ -638,7 +638,7 @@ Public Sub ValidateInputs(ByVal wsRaw As Worksheet, ByVal wsCfg As Worksheet, By
 
     ' Config: валидация параметров
     cfgLast = LastUsedRow(wsCfg)
-    Set stationParopipe = CreateObject("Scripting.Dictionary")
+    Set stationParopipe = MapNew()
     For r = 2 To cfgLast
         If Len(Trim$(CStr(wsCfg.Cells(r, 2).Value))) = 0 Then GoTo NX
         g = ReadGenCfgEff(wsCfg, r, st)
@@ -660,13 +660,13 @@ Public Sub ValidateInputs(ByVal wsRaw As Worksheet, ByVal wsCfg As Worksheet, By
             AppendLog "WARN", g.Station & "/" & g.Generator, "Pmin < 0: " & g.PMin
         ' Паропровод: все или никто в рамках станции
         If g.InStationSum Then
-            If stationParopipe.Exists(g.Station) Then
-                st2 = CStr(stationParopipe(g.Station))
+            If MapExists(stationParopipe, g.Station) Then
+                st2 = CStr(MapGet(stationParopipe, g.Station))
                 If (st2 = "YES" And Len(g.Paroprovod) = 0) Or (st2 = "NO" And Len(g.Paroprovod) > 0) Then
                     AppendLog "WARN", g.Station, "Колонка Паропровод заполнена частично - проверьте согласованность"
                 End If
             Else
-                stationParopipe(g.Station) = IIf(Len(g.Paroprovod) > 0, "YES", "NO")
+                MapSet stationParopipe, g.Station, IIf(Len(g.Paroprovod) > 0, "YES", "NO")
             End If
         End If
 NX:
@@ -696,8 +696,8 @@ NX:
     End If
 
     ' Справка по профилям Kд(t): значения в контрольных точках 15 с и колич. интервала
-    If Not m_KdProfiles Is Nothing Then
-        For Each kk In m_KdProfiles.Keys
+    If Not m_KdProfileKeys Is Nothing Then
+        For Each kk In m_KdProfileKeys
             On Error Resume Next
             AppendLog "INFO", "Kд(t) " & CStr(kk), "Kд(15 с) = " & Format(DynamicKdByTime(CStr(kk), 15#), "0.00") & _
                       "; Kд(" & Format(st.QuantIntervalSec, "0") & " с) = " & Format(DynamicKdByTime(CStr(kk), st.QuantIntervalSec), "0.00") & _

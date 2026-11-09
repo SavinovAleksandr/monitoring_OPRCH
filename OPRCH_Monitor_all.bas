@@ -7,14 +7,14 @@ Option Explicit
 ' Per-station:    data sheet <Ст>_Сумма[_<Пп>] +  chart sheet <...>_Граф
 ' Extra sheets:   Summary, Log
 '
-' Версия: 1.8.2
+' Версия: 1.8.3
 ' Универсальный мониторинг: любая станция / любое событие через RawData + Config.
 ' Норматив: Прил. 14 (Авария) и Прил. 1 (Испытание). Вкладки «Запрос» нет.
-' 1.8.2: модуль OPRCH_Station (Sheets был >64КБ и не импортировался); готовый .xlsm.
-' 1.8.1: убрана вкладка «Запрос»; шаблон обобщён.
+' 1.8.3: xlsm code page 1251 (фикс загрузки на Mac); Dictionary -> Collection (Mac).
+' 1.8.2: модуль OPRCH_Station; готовый .xlsm.
 ' ==========================================================
 
-Public Const OPRCH_VERSION As String = "1.8.2"
+Public Const OPRCH_VERSION As String = "1.8.3"
 
 Private Const SH_RAW As String = "RawData"
 Private Const SH_CFG As String = "Config"
@@ -43,8 +43,9 @@ Private Const H15_REF As Double = 0.3              ' ориентир для h(1
 Private Const EVENT_MIN_OUTSIDE_SEC As Double = 5# ' фильтр коротких выбросов частоты при поиске событий
 
 Private m_LogRow As Long
-Private m_KdProfiles As Object   ' key=EQUIPTYPE, value=Array(t0,kd0,t1,kd1,t2,kd2,t3,kd3)
-Private m_ChartOpts As Object    ' key=REL_*/ABS_*, value=Boolean
+Private m_KdProfiles As Collection   ' key=EQUIPTYPE, value=Array(t0,kd0,...)
+Private m_KdProfileKeys As Collection
+Private m_ChartOpts As Collection    ' key=REL_*/ABS_*, value=Boolean
 Private m_Protocol As Collection ' строки текстового протокола (лист «Протокол»)
 
 Private Type TSettings
@@ -218,6 +219,32 @@ Private Type TStationResult
     TrQuasiSteady As Boolean
     F0 As Double
 End Type
+
+' Карта ключ->значение на Collection (Scripting.Dictionary на Excel Mac недоступен)
+Public Function MapNew() As Collection
+    Set MapNew = New Collection
+End Function
+
+Public Function MapExists(ByVal m As Collection, ByVal key As String) As Boolean
+    Dim tmp As Variant
+    If m Is Nothing Then Exit Function
+    On Error Resume Next
+    tmp = m.Item(CStr(key))
+    MapExists = (Err.Number = 0)
+    Err.Clear
+    On Error GoTo 0
+End Function
+
+Public Function MapGet(ByVal m As Collection, ByVal key As String) As Variant
+    MapGet = m.Item(CStr(key))
+End Function
+
+Public Sub MapSet(ByVal m As Collection, ByVal key As String, ByVal val As Variant)
+    On Error Resume Next
+    m.Remove CStr(key)
+    On Error GoTo 0
+    m.Add Item:=val, Key:=CStr(key)
+End Sub
 
 ' ==========================================================
 ' Точки входа
@@ -2861,18 +2888,18 @@ Private Sub BuildStationAggregates(ByVal wsRaw As Worksheet, ByVal wsCfg As Work
     Dim cfgLast As Long, r As Long
     Dim g As TGenCfg
     Dim stations As Collection, key As Variant
-    Dim done As Object
+    Dim done As Collection
 
     cfgLast = LastUsedRow(wsCfg)
     Set stations = New Collection
-    Set done = CreateObject("Scripting.Dictionary")
+    Set done = MapNew()
 
     For r = 2 To cfgLast
         If Len(Trim$(CStr(wsCfg.Cells(r, 2).Value))) = 0 Then GoTo NX
         g = ReadGenCfgEff(wsCfg, r, st)
         If g.Enabled And g.InStationSum And Len(g.Station) > 0 Then
-            If Not done.Exists(g.Station) Then
-                done(g.Station) = 1
+            If Not MapExists(done, g.Station) Then
+                MapSet done, g.Station, 1
                 stations.Add g.Station
             End If
         End If
@@ -2889,29 +2916,25 @@ Private Sub BuildParoprovodSubAggregates(ByVal wsRaw As Worksheet, ByVal wsCfg A
                                          ByVal stationName As String, ByRef st As TSettings, ByRef outRow As Long)
     Dim cfgLast As Long, r As Long
     Dim g As TGenCfg
-    Dim paropipes As Object, p As Variant
+    Dim pipeNames As Collection, p As Variant
 
-    Set paropipes = CreateObject("Scripting.Dictionary")
+    Set pipeNames = New Collection
     cfgLast = LastUsedRow(wsCfg)
     For r = 2 To cfgLast
         If Len(Trim$(CStr(wsCfg.Cells(r, 2).Value))) = 0 Then GoTo NX
         g = ReadGenCfgEff(wsCfg, r, st)
         If g.Enabled And g.InStationSum And StationMatch(g.Station, stationName) Then
             If Len(g.Paroprovod) > 0 Then
-                If paropipes.Exists(g.Paroprovod) Then
-                    paropipes(g.Paroprovod) = paropipes(g.Paroprovod) + 1
-                Else
-                    paropipes(g.Paroprovod) = 1
-                End If
+                On Error Resume Next
+                pipeNames.Add g.Paroprovod, g.Paroprovod
+                On Error GoTo 0
             End If
         End If
 NX:
     Next r
 
-    For Each p In paropipes.Keys
-        If paropipes(p) >= 1 Then
-            BuildOneStationAggregate wsRaw, wsCfg, wsSummary, stationName, CStr(p), st, outRow
-        End If
+    For Each p In pipeNames
+        BuildOneStationAggregate wsRaw, wsCfg, wsSummary, stationName, CStr(p), st, outRow
     Next p
 End Sub
 
@@ -3955,7 +3978,7 @@ End Sub
 Private Sub ValidateInputs(ByVal wsRaw As Worksheet, ByVal wsCfg As Worksheet, ByRef st As TSettings, ByVal timeCol As Long)
     Dim lastR As Long, r As Long, prev As Double, cur As Double, gap As Double, maxGap As Double
     Dim cfgLast As Long, g As TGenCfg, headerRow As Long
-    Dim paropipes As Object, stationParopipe As Object, st2 As String, kk As Variant
+    Dim stationParopipe As Collection, st2 As String, kk As Variant
 
     ' RawData: шаг
     lastR = LastUsedRow(wsRaw)
@@ -3980,7 +4003,7 @@ Private Sub ValidateInputs(ByVal wsRaw As Worksheet, ByVal wsCfg As Worksheet, B
 
     ' Config: валидация параметров
     cfgLast = LastUsedRow(wsCfg)
-    Set stationParopipe = CreateObject("Scripting.Dictionary")
+    Set stationParopipe = MapNew()
     For r = 2 To cfgLast
         If Len(Trim$(CStr(wsCfg.Cells(r, 2).Value))) = 0 Then GoTo NX
         g = ReadGenCfgEff(wsCfg, r, st)
@@ -4002,13 +4025,13 @@ Private Sub ValidateInputs(ByVal wsRaw As Worksheet, ByVal wsCfg As Worksheet, B
             AppendLog "WARN", g.Station & "/" & g.Generator, "Pmin < 0: " & g.PMin
         ' Паропровод: все или никто в рамках станции
         If g.InStationSum Then
-            If stationParopipe.Exists(g.Station) Then
-                st2 = CStr(stationParopipe(g.Station))
+            If MapExists(stationParopipe, g.Station) Then
+                st2 = CStr(MapGet(stationParopipe, g.Station))
                 If (st2 = "YES" And Len(g.Paroprovod) = 0) Or (st2 = "NO" And Len(g.Paroprovod) > 0) Then
                     AppendLog "WARN", g.Station, "Колонка Паропровод заполнена частично - проверьте согласованность"
                 End If
             Else
-                stationParopipe(g.Station) = IIf(Len(g.Paroprovod) > 0, "YES", "NO")
+                MapSet stationParopipe, g.Station, IIf(Len(g.Paroprovod) > 0, "YES", "NO")
             End If
         End If
 NX:
@@ -4038,8 +4061,8 @@ NX:
     End If
 
     ' Справка по профилям Kд(t): значения в контрольных точках 15 с и колич. интервала
-    If Not m_KdProfiles Is Nothing Then
-        For Each kk In m_KdProfiles.Keys
+    If Not m_KdProfileKeys Is Nothing Then
+        For Each kk In m_KdProfileKeys
             On Error Resume Next
             AppendLog "INFO", "Kд(t) " & CStr(kk), "Kд(15 с) = " & Format(DynamicKdByTime(CStr(kk), 15#), "0.00") & _
                       "; Kд(" & Format(st.QuantIntervalSec, "0") & " с) = " & Format(DynamicKdByTime(CStr(kk), st.QuantIntervalSec), "0.00") & _
@@ -4322,7 +4345,8 @@ Private Sub LoadKdProfiles(ByVal wsCfg As Worksheet)
     Dim et As String
     Dim t0 As Double, t1 As Double, t2 As Double, t3 As Double
     Dim kd0 As Double, kd1 As Double, kd2 As Double, kd3 As Double
-    Set m_KdProfiles = CreateObject("Scripting.Dictionary")
+    Set m_KdProfiles = MapNew()
+    Set m_KdProfileKeys = New Collection
     lastR = LastUsedRow(wsCfg)
     For r = 3 To lastR
         et = UCase$(Trim$(CStr(wsCfg.Cells(r, 27).Value)))
@@ -4335,7 +4359,12 @@ Private Sub LoadKdProfiles(ByVal wsCfg As Worksheet)
         kd2 = NzD(wsCfg.Cells(r, 33).Value, -1)
         t3 = NzD(wsCfg.Cells(r, 34).Value, 0)
         kd3 = NzD(wsCfg.Cells(r, 35).Value, -1)
-        m_KdProfiles(et) = Array(t0, kd0, t1, kd1, t2, kd2, t3, kd3)
+        If Not MapExists(m_KdProfiles, et) Then
+            On Error Resume Next
+            m_KdProfileKeys.Add et, et
+            On Error GoTo 0
+        End If
+        MapSet m_KdProfiles, et, Array(t0, kd0, t1, kd1, t2, kd2, t3, kd3)
 NX:
     Next r
 End Sub
@@ -4375,20 +4404,20 @@ Private Function ResolveKdKey(ByVal equipType As String) As String
     key = UCase$(Trim$(equipType))
     ResolveKdKey = key
     If m_KdProfiles Is Nothing Then Exit Function
-    If m_KdProfiles.Exists(key) Then Exit Function
-    If InStr(key, "ГПА") > 0 And m_KdProfiles.Exists("ГПА") Then ResolveKdKey = "ГПА": Exit Function
-    If InStr(key, "ГТУ") > 0 And m_KdProfiles.Exists("ГТУ") Then ResolveKdKey = "ГТУ": Exit Function
-    If (InStr(key, "ПГУ") > 0 And (InStr(key, "СБРОС") > 0 Or InStr(key, "ПАРАЛ") > 0)) And m_KdProfiles.Exists("ПГУ_СБРОСН") Then
+    If MapExists(m_KdProfiles, key) Then Exit Function
+    If InStr(key, "ГПА") > 0 And MapExists(m_KdProfiles, "ГПА") Then ResolveKdKey = "ГПА": Exit Function
+    If InStr(key, "ГТУ") > 0 And MapExists(m_KdProfiles, "ГТУ") Then ResolveKdKey = "ГТУ": Exit Function
+    If (InStr(key, "ПГУ") > 0 And (InStr(key, "СБРОС") > 0 Or InStr(key, "ПАРАЛ") > 0)) And MapExists(m_KdProfiles, "ПГУ_СБРОСН") Then
         ResolveKdKey = "ПГУ_СБРОСН": Exit Function
     End If
-    If InStr(key, "ПГУ") > 0 And m_KdProfiles.Exists("ПГУ_УТИЛ") Then ResolveKdKey = "ПГУ_УТИЛ": Exit Function
-    If (InStr(key, "НЕБЛОК") > 0 Or InStr(key, "ОБЩ") > 0) And m_KdProfiles.Exists("ПТУ_НЕБЛОК") Then
+    If InStr(key, "ПГУ") > 0 And MapExists(m_KdProfiles, "ПГУ_УТИЛ") Then ResolveKdKey = "ПГУ_УТИЛ": Exit Function
+    If (InStr(key, "НЕБЛОК") > 0 Or InStr(key, "ОБЩ") > 0) And MapExists(m_KdProfiles, "ПТУ_НЕБЛОК") Then
         ResolveKdKey = "ПТУ_НЕБЛОК": Exit Function
     End If
-    If (InStr(key, "УГОЛЬ") > 0 Or InStr(key, "ПЫЛЕУГ") > 0) And m_KdProfiles.Exists("ПТУ_БЛОК_УГОЛЬ") Then
+    If (InStr(key, "УГОЛЬ") > 0 Or InStr(key, "ПЫЛЕУГ") > 0) And MapExists(m_KdProfiles, "ПТУ_БЛОК_УГОЛЬ") Then
         ResolveKdKey = "ПТУ_БЛОК_УГОЛЬ": Exit Function
     End If
-    If (InStr(key, "ПТУ") > 0 Or InStr(key, "ПСУ") > 0 Or InStr(key, "БЛОК") > 0) And m_KdProfiles.Exists("ПТУ_БЛОК") Then
+    If (InStr(key, "ПТУ") > 0 Or InStr(key, "ПСУ") > 0 Or InStr(key, "БЛОК") > 0) And MapExists(m_KdProfiles, "ПТУ_БЛОК") Then
         ResolveKdKey = "ПТУ_БЛОК": Exit Function
     End If
 End Function
@@ -4397,10 +4426,10 @@ Private Function DynamicKdByTime(ByVal equipType As String, ByVal tSec As Double
     Dim prof As Variant, key As String
     If m_KdProfiles Is Nothing Then Err.Raise vbObjectError + 2401, , "Профили Kд(t) не загружены."
     key = ResolveKdKey(equipType)
-    If Not m_KdProfiles.Exists(key) Then
+    If Not MapExists(m_KdProfiles, key) Then
         Err.Raise vbObjectError + 2402, , "Для типа '" & equipType & "' не задан профиль Kд(t) в Config (AA:AI)."
     End If
-    prof = m_KdProfiles(key)
+    prof = MapGet(m_KdProfiles, key)
     DynamicKdByTime = ClampKd(EvalKdAbs(tSec, prof))
 End Function
 
@@ -4412,11 +4441,11 @@ Private Function KdProfileText(ByVal equipType As String) As String
         Exit Function
     End If
     key = ResolveKdKey(equipType)
-    If Not m_KdProfiles.Exists(key) Then
+    If Not MapExists(m_KdProfiles, key) Then
         KdProfileText = "Config: профиль для типа '" & equipType & "' не задан"
         Exit Function
     End If
-    prof = m_KdProfiles(key)
+    prof = MapGet(m_KdProfiles, key)
     KdProfileText = src & ": t0=" & Format(prof(0), "0") & "с Kд0=" & Format(prof(1), "0.00") & _
                     "; t1=" & Format(prof(2), "0") & "с Kд1=" & Format(prof(3), "0.00") & _
                     "; t2=" & Format(prof(4), "0") & "с Kд2=" & Format(prof(5), "0.00") & _
@@ -4425,33 +4454,33 @@ End Function
 
 Private Sub LoadChartDisplayOptions(ByVal wsCfg As Worksheet)
     Dim r As Long
-    Set m_ChartOpts = CreateObject("Scripting.Dictionary")
+    Set m_ChartOpts = MapNew()
     For r = 3 To 10
-        m_ChartOpts("REL_" & CStr(r)) = (NzD(wsCfg.Cells(r, 37).Value, 1) <> 0) ' AK
-        m_ChartOpts("ABS_" & CStr(r)) = (NzD(wsCfg.Cells(r, 38).Value, 1) <> 0) ' AL
+        MapSet m_ChartOpts, "REL_" & CStr(r), (NzD(wsCfg.Cells(r, 37).Value, 1) <> 0) ' AK
+        MapSet m_ChartOpts, "ABS_" & CStr(r), (NzD(wsCfg.Cells(r, 38).Value, 1) <> 0) ' AL
     Next r
     ' Row mapping: 3 Pfact, 4 Preq, 5 Tol+, 6 Tol-, 7 Limits, 8 Freq, 9 Markers
-    m_ChartOpts("REL_PFACT") = m_ChartOpts("REL_3")
-    m_ChartOpts("REL_PREQ") = m_ChartOpts("REL_4")
-    m_ChartOpts("REL_TOL_P") = m_ChartOpts("REL_5")
-    m_ChartOpts("REL_TOL_M") = m_ChartOpts("REL_6")
-    m_ChartOpts("REL_LIMITS") = m_ChartOpts("REL_7")
-    m_ChartOpts("REL_FREQ") = m_ChartOpts("REL_8")
-    m_ChartOpts("REL_MARKERS") = m_ChartOpts("REL_9")
-    m_ChartOpts("ABS_PFACT") = m_ChartOpts("ABS_3")
-    m_ChartOpts("ABS_PREQ") = m_ChartOpts("ABS_4")
-    m_ChartOpts("ABS_TOL_P") = m_ChartOpts("ABS_5")
-    m_ChartOpts("ABS_TOL_M") = m_ChartOpts("ABS_6")
-    m_ChartOpts("ABS_LIMITS") = m_ChartOpts("ABS_7")
-    m_ChartOpts("ABS_FREQ") = m_ChartOpts("ABS_8")
-    m_ChartOpts("ABS_MARKERS") = m_ChartOpts("ABS_9")
+    MapSet m_ChartOpts, "REL_PFACT", MapGet(m_ChartOpts, "REL_3")
+    MapSet m_ChartOpts, "REL_PREQ", MapGet(m_ChartOpts, "REL_4")
+    MapSet m_ChartOpts, "REL_TOL_P", MapGet(m_ChartOpts, "REL_5")
+    MapSet m_ChartOpts, "REL_TOL_M", MapGet(m_ChartOpts, "REL_6")
+    MapSet m_ChartOpts, "REL_LIMITS", MapGet(m_ChartOpts, "REL_7")
+    MapSet m_ChartOpts, "REL_FREQ", MapGet(m_ChartOpts, "REL_8")
+    MapSet m_ChartOpts, "REL_MARKERS", MapGet(m_ChartOpts, "REL_9")
+    MapSet m_ChartOpts, "ABS_PFACT", MapGet(m_ChartOpts, "ABS_3")
+    MapSet m_ChartOpts, "ABS_PREQ", MapGet(m_ChartOpts, "ABS_4")
+    MapSet m_ChartOpts, "ABS_TOL_P", MapGet(m_ChartOpts, "ABS_5")
+    MapSet m_ChartOpts, "ABS_TOL_M", MapGet(m_ChartOpts, "ABS_6")
+    MapSet m_ChartOpts, "ABS_LIMITS", MapGet(m_ChartOpts, "ABS_7")
+    MapSet m_ChartOpts, "ABS_FREQ", MapGet(m_ChartOpts, "ABS_8")
+    MapSet m_ChartOpts, "ABS_MARKERS", MapGet(m_ChartOpts, "ABS_9")
 End Sub
 
 Private Function ChartOpt(ByVal key As String, ByVal fallback As Boolean) As Boolean
     If m_ChartOpts Is Nothing Then
         ChartOpt = fallback
-    ElseIf m_ChartOpts.Exists(key) Then
-        ChartOpt = CBool(m_ChartOpts(key))
+    ElseIf MapExists(m_ChartOpts, key) Then
+        ChartOpt = CBool(MapGet(m_ChartOpts, key))
     Else
         ChartOpt = fallback
     End If
