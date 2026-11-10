@@ -1,8 +1,14 @@
-Запасная установка макроса ОПРЧ v1.8.3
+Запасная установка макроса ОПРЧ v1.8.4
 =====================================
 
 Обычный путь: откройте готовый Шаблон_мониторинг_ОПРЧ.xlsm — импорт не нужен.
-На Mac: Option+F8 (или Сервис → Макрос → Макросы) → AnalyzeOPRCH.
+При открытии создаются кнопки на листе Config (Workbook_Open -> InitOPRCHUISilent).
+
+Запуск расчёта:
+  - кнопка «Запустить мониторинг ОПРЧ» на Config, или
+  - Alt+F8 (Windows) / Option+F8 (Mac) -> AnalyzeOPRCH
+
+Если кнопок нет: Alt+F8 -> InitOPRCHUI.
 
 Если нужно поставить макросы вручную в пустую книгу:
 
@@ -14,6 +20,7 @@
 4. Alt+F11 → File → Import File →
    OPRCH_Install_win1251.bas
 5. Alt+F8 → InstallOPRCHMacros.
+6. Alt+F8 → InitOPRCHUI.
 
 Установщик сам подтянет шесть модулей:
   1) OPRCH_Common_win1251.bas

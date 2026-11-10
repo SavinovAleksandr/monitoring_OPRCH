@@ -21,6 +21,7 @@ MONITOR_PROCS = {
     "SetupOPRCHTemplate", "ExportOPRCHReport", "AnalyzeOPRCH",
     "ClearOPRCHResults", "ApplyPresetsToConfig",
     "EnsureControlButtons", "AddOrReplaceButton", "WriteInstructionSheet",
+    "InitOPRCHUI", "InitOPRCHUISilent",
 }
 ENGINE_PROCS = {
     "AnalyzeOneGenerator", "EvaluateReaction15", "React15ThresholdMW",
@@ -128,7 +129,7 @@ def split_master(text: str) -> dict[str, str]:
             "Option Explicit",
             "",
             f"' {notes[key]}",
-            "' OPRCH_Monitor v1.8.2 — раздельный модуль (лимит VBA ~64 КБ).",
+            "' OPRCH_Monitor v1.8.4 — раздельный модуль (лимит VBA ~64 КБ).",
             "",
         ]
         if key == "Common":
@@ -440,6 +441,25 @@ def build_xlsm_with_macros(xlsx: Path, modules: dict[str, str] | None = None) ->
     if "Авария" not in check0.get_module("OPRCH_Sheets"):
         raise RuntimeError("Кириллица в OPRCH_Sheets повреждена при сборке xlsm")
 
+    # Автоинициализация кнопок при открытии книги
+    tw = check0.get_module("ThisWorkbook")
+    if "InitOPRCHUISilent" not in tw:
+        if not tw.endswith("\n"):
+            tw += "\n"
+        tw += (
+            "\nPrivate Sub Workbook_Open()\n"
+            "    On Error Resume Next\n"
+            "    Application.Run \"InitOPRCHUISilent\"\n"
+            "    On Error GoTo 0\n"
+            "End Sub\n"
+        )
+        check0.set_module("ThisWorkbook", tw)
+        check0.save()
+        check0 = ExcelFile(shell)
+
+    if "InitOPRCHUI" not in check0.get_module("OPRCH_Monitor"):
+        raise RuntimeError("В OPRCH_Monitor нет InitOPRCHUI")
+
     with ZipFile(shell, "r") as z:
         vba = z.read("xl/vbaProject.bin")
     print("vbaProject.bin", len(vba), "code_page", check0.vba_project().code_page)
@@ -496,11 +516,11 @@ def build_xlsm_with_macros(xlsx: Path, modules: dict[str, str] | None = None) ->
 def main():
     text = MASTER.read_text("utf-8")
     # bump version stamp in comment if needed
-    if 'OPRCH_VERSION As String = "1.8.2"' in text:
-        text = text.replace('OPRCH_VERSION As String = "1.8.2"', 'OPRCH_VERSION As String = "1.8.3"')
-        text = text.replace("' Версия: 1.8.2", "' Версия: 1.8.3")
+    if 'OPRCH_VERSION As String = "1.8.3"' in text:
+        text = text.replace('OPRCH_VERSION As String = "1.8.3"', 'OPRCH_VERSION As String = "1.8.4"')
+        text = text.replace("' Версия: 1.8.3", "' Версия: 1.8.4")
         MASTER.write_text(text, encoding="utf-8")
-    elif 'OPRCH_VERSION As String = "1.8.3"' not in text:
+    elif 'OPRCH_VERSION As String = "1.8.4"' not in text:
         raise SystemExit("Unexpected version in master")
 
     # syntax sanity: unmatched quotes in slim is hard; check basic patterns

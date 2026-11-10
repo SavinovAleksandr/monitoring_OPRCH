@@ -2,7 +2,7 @@ Attribute VB_Name = "OPRCH_Engine"
 Option Explicit
 
 ' Расчёт генератора. Импорт 2.
-' OPRCH_Monitor v1.8.2 — раздельный модуль (лимит VBA ~64 КБ).
+' OPRCH_Monitor v1.8.4 — раздельный модуль (лимит VBA ~64 КБ).
 
 Public Function AnalyzeOneGenerator(ByVal wsRaw As Worksheet, ByRef st As TSettings, ByRef g As TGenCfg, _
                                      ByRef ev As TEvent, ByVal evIdx As Long) As TGenResult

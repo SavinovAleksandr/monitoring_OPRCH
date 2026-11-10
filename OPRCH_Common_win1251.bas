@@ -3,7 +3,7 @@ Option Explicit
 
 
 
-Public Const OPRCH_VERSION As String = "1.8.3"
+Public Const OPRCH_VERSION As String = "1.8.4"
 
 Public Const SH_RAW As String = "RawData"
 Public Const SH_CFG As String = "Config"

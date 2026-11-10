@@ -2,7 +2,7 @@ Attribute VB_Name = "OPRCH_Station"
 Option Explicit
 
 ' Суммы станций (п. 4.2.10). Импорт 3.
-' OPRCH_Monitor v1.8.2 — раздельный модуль (лимит VBA ~64 КБ).
+' OPRCH_Monitor v1.8.4 — раздельный модуль (лимит VBA ~64 КБ).
 
 Public Sub BuildStationAggregates(ByVal wsRaw As Worksheet, ByVal wsCfg As Worksheet, ByVal wsSummary As Worksheet, _
                                    ByRef st As TSettings, ByRef outRow As Long)

@@ -2,7 +2,7 @@ Attribute VB_Name = "OPRCH_Monitor"
 Option Explicit
 
 ' Точки входа AnalyzeOPRCH. Импорт 6.
-' OPRCH_Monitor v1.8.2 — раздельный модуль (лимит VBA ~64 КБ).
+' OPRCH_Monitor v1.8.4 — раздельный модуль (лимит VBA ~64 КБ).
 
 Public Sub SetupOPRCHTemplate()
     Dim wsRaw As Worksheet, wsCfg As Worksheet, wsSum As Worksheet
@@ -157,11 +157,20 @@ Public Sub AnalyzeOPRCH()
     Set wsCfg = GetRequiredSheet(SH_CFG)
     Set wsSummary = EnsureSheet(SH_SUM)
 
+    ' Кнопки сразу - даже если дальше будет ошибка, интерфейс уже на месте
+    stepName = "Интерфейс (кнопки)"
+    On Error Resume Next
+    EnsureControlButtons wsCfg
+    WriteInstructionSheet
+    On Error GoTo EH
+
     stepName = "Чтение настроек"
     st = ReadSettings(wsCfg)
     LoadKdProfiles wsCfg
     LoadChartDisplayOptions wsCfg
+    On Error Resume Next
     EnsureChartOptionCheckboxes wsCfg
+    On Error GoTo EH
     timeCol = FindHeaderCol(wsRaw, "Время")
     If timeCol = 0 Then Err.Raise vbObjectError + 2001, , "В RawData не найдена колонка 'Время'."
 
@@ -359,15 +368,40 @@ Public Sub WriteInstructionSheet()
     ws.Range("A27").Value = "• Для неблочной ТЭС нормативный вывод — по сумме станции (п. 4.2.10); строки генераторов при ОК по сумме — справочно."
     ws.Range("A29").Value = "5. ЗАПУСК"
     ws.Range("A29").Font.Bold = True
-    ws.Range("A30").Value = "Откройте .xlsm -> разрешите макросы -> подставьте свои RawData/Config -> «Запустить мониторинг ОПРЧ»."
-    ws.Range("A31").Value = "Не запускайте SetupOPRCHTemplate на заполненной книге — он перезапишет RawData/Config демо-строками."
+    ws.Range("A30").Value = "Разрешите макросы -> лист Config -> кнопка «Запустить мониторинг ОПРЧ» (или Alt+F8 / Option+F8 -> AnalyzeOPRCH)."
+    ws.Range("A31").Value = "Если кнопок нет: Alt+F8 -> InitOPRCHUI. SetupOPRCHTemplate на заполненной книге не запускайте - он перезапишет RawData/Config."
     ws.Columns("A").ColumnWidth = 140
     On Error Resume Next
     ws.Move Before:=ThisWorkbook.Worksheets(1)
     On Error GoTo 0
 End Sub
 
+' Создать/обновить кнопки и лист «Инструкция» (без пересчёта).
+' Alt+F8 / Option+F8 -> InitOPRCHUI. Также вызывается при открытии книги.
+
+Public Sub InitOPRCHUI()
+    On Error GoTo EH
+    Dim wsCfg As Worksheet
+    WriteInstructionSheet
+    Set wsCfg = EnsureSheet(SH_CFG)
+    EnsureControlButtons wsCfg
+    On Error Resume Next
+    EnsureControlButtons EnsureSheet(SH_INSTR)
+    On Error GoTo 0
+    Exit Sub
+EH:
+    MsgBox "Ошибка InitOPRCHUI: " & Err.Description, vbCritical
+End Sub
+
+Public Sub InitOPRCHUISilent()
+    On Error Resume Next
+    WriteInstructionSheet
+    EnsureControlButtons EnsureSheet(SH_CFG)
+    EnsureControlButtons EnsureSheet(SH_INSTR)
+End Sub
+
 Public Sub EnsureControlButtons(ByVal ws As Worksheet)
+    If ws Is Nothing Then Exit Sub
     AddOrReplaceButton ws, "btnRunOPRCH", ws.Range("E30"), 260, 32, _
         "Запустить мониторинг ОПРЧ", "AnalyzeOPRCH", RGB(40, 120, 220), RGB(255, 255, 255)
     AddOrReplaceButton ws, "btnClearOPRCH", ws.Range("I30"), 200, 32, _
@@ -383,15 +417,40 @@ Public Sub AddOrReplaceButton(ByVal ws As Worksheet, ByVal nm As String, ByVal a
                                ByVal caption As String, ByVal onAction As String, _
                                ByVal fillColor As Long, ByVal textColor As Long)
     Dim shp As Shape
+    Dim macroRef As String
     On Error Resume Next
     ws.Shapes(nm).Delete
-    On Error GoTo 0
+    Err.Clear
     Set shp = ws.Shapes.AddShape(msoShapeRoundedRectangle, anchor.Left, anchor.Top, w, h)
+    If shp Is Nothing Then
+        ' запасной вариант: кнопка формы (стабильнее на части сборок Excel)
+        Dim btn As Button
+        Set btn = ws.Buttons.Add(anchor.Left, anchor.Top, w, h)
+        If Not btn Is Nothing Then
+            btn.Name = nm
+            btn.Caption = caption
+            btn.OnAction = "'" & ThisWorkbook.Name & "'!" & onAction
+        End If
+        Exit Sub
+    End If
     shp.Name = nm
-    shp.TextFrame2.TextRange.Text = caption
-    shp.OnAction = onAction
+    macroRef = "'" & ThisWorkbook.Name & "'!" & onAction
+    shp.OnAction = macroRef
     shp.Fill.ForeColor.RGB = fillColor
     shp.Line.ForeColor.RGB = RGB(70, 70, 70)
-    shp.TextFrame2.TextRange.Font.Fill.ForeColor.RGB = textColor
-    shp.TextFrame2.TextRange.Font.Size = 11
+    ' TextFrame совместимее TextFrame2 на Windows Excel
+    Err.Clear
+    shp.TextFrame.Characters.Text = caption
+    If Err.Number <> 0 Then
+        Err.Clear
+        shp.TextFrame2.TextRange.Text = caption
+        shp.TextFrame2.TextRange.Font.Fill.ForeColor.RGB = textColor
+        shp.TextFrame2.TextRange.Font.Size = 11
+    Else
+        shp.TextFrame.Characters.Font.Color = textColor
+        shp.TextFrame.Characters.Font.Size = 11
+        shp.TextFrame.HorizontalAlignment = xlHAlignCenter
+        shp.TextFrame.VerticalAlignment = xlVAlignCenter
+    End If
+    On Error GoTo 0
 End Sub
