@@ -2,7 +2,7 @@ Attribute VB_Name = "OPRCH_Sheets"
 Option Explicit
 
 ' Summary/Log/Протокол/листы генераторов. Импорт 4.
-' OPRCH_Monitor v1.8.5 — раздельный модуль (лимит VBA ~64 КБ).
+' OPRCH_Monitor v1.8.6 — раздельный модуль (лимит VBA ~64 КБ).
 
 Public Sub AddProtocolLine(ByVal s As String)
     If m_Protocol Is Nothing Then Set m_Protocol = New Collection

@@ -273,14 +273,27 @@ NextGen:
     Application.Calculation = xlCalculationAutomatic
     Application.ScreenUpdating = True
 
-    MsgBox "Мониторинг ОПРЧ завершен (v" & OPRCH_VERSION & "). Время: " _
+    OPRCHMsg "Мониторинг ОПРЧ завершен (v" & OPRCH_VERSION & "). Время: " _
         & Format(Timer - t0Run, "0.0") & " c.", vbInformation
     Exit Sub
 
 EH:
     Application.Calculation = xlCalculationAutomatic
     Application.ScreenUpdating = True
-    MsgBox "Ошибка AnalyzeOPRCH (" & stepName & "): " & Err.Description, vbCritical
+    OPRCHMsg "Ошибка AnalyzeOPRCH (" & stepName & "): " & Err.Description, vbCritical
+End Sub
+
+
+Public Sub AnalyzeOPRCHSilent()
+    Dim prev As Boolean
+    prev = gOPRCHQuiet
+    gOPRCHQuiet = True
+    On Error GoTo EH
+    AnalyzeOPRCH
+    gOPRCHQuiet = prev
+    Exit Sub
+EH:
+    gOPRCHQuiet = prev
 End Sub
 
 Public Sub ClearOPRCHResults()
@@ -375,15 +388,17 @@ Public Sub InitOPRCHUI()
     On Error GoTo 0
     Exit Sub
 EH:
-    MsgBox "Ошибка InitOPRCHUI: " & Err.Description, vbCritical
+    OPRCHMsg "Ошибка InitOPRCHUI: " & Err.Description, vbCritical
 End Sub
 
 Public Sub InitOPRCHUISilent()
     On Error Resume Next
+    gOPRCHQuiet = True
     WriteInstructionSheet
     EnsureControlButtons EnsureSheet(SH_CFG)
     EnsureControlButtons EnsureSheet(SH_INSTR)
 End Sub
+
 
 Public Sub EnsureControlButtons(ByVal ws As Worksheet)
     If ws Is Nothing Then Exit Sub

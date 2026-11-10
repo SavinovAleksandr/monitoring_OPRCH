@@ -2,7 +2,7 @@ Attribute VB_Name = "OPRCH_Common"
 Option Explicit
 
 ' Типы, константы, общие функции. Импорт 1.
-' OPRCH_Monitor v1.8.5 — раздельный модуль (лимит VBA ~64 КБ).
+' OPRCH_Monitor v1.8.6 — раздельный модуль (лимит VBA ~64 КБ).
 
 ' ==========================================================
 ' OPRCH monitoring  (quantitative + qualitative)
@@ -10,15 +10,17 @@ Option Explicit
 ' Per-station:    data sheet <Ст>_Сумма[_<Пп>] +  chart sheet <...>_Граф
 ' Extra sheets:   Summary, Log
 '
-' Версия: 1.8.5
+' Версия: 1.8.6
 ' Универсальный мониторинг: любая станция / любое событие через RawData + Config.
 ' Норматив: Прил. 14 (Авария) и Прил. 1 (Испытание). Вкладки «Запрос» нет.
+' 1.8.6: тихий режим (gOPRCHQuiet / AnalyzeOPRCHSilent) — без MsgBox для автопрогона.
 ' 1.8.5: сверка с МУ (Прил. 1/14): константы, ГЭС в 4.1.2, общие хелперы.
 ' 1.8.4: InitOPRCHUI + Workbook_Open; кнопки совместимы с Windows Excel.
 ' 1.8.3: xlsm code page 1251; Dictionary -> Collection.
 ' ==========================================================
 
-Public Const OPRCH_VERSION As String = "1.8.5"
+Public Const OPRCH_VERSION As String = "1.8.6"
+Public gOPRCHQuiet As Boolean   ' True: без MsgBox (автопрогон / Silent)
 
 Public Const SH_RAW As String = "RawData"
 Public Const SH_CFG As String = "Config"
@@ -893,6 +895,14 @@ Public Function KdProfileText(ByVal equipType As String) As String
                     "; t2=" & Format(prof(4), "0") & "с Kд2=" & Format(prof(5), "0.00") & _
                     "; t3=" & Format(prof(6), "0") & "с Kд3=" & Format(prof(7), "0.00")
 End Function
+
+Public Sub OPRCHMsg(ByVal msg As String, Optional ByVal style As Long = vbInformation)
+    If gOPRCHQuiet Then Exit Sub
+    On Error Resume Next
+    If Not Application.Interactive Then Exit Sub
+    On Error GoTo 0
+    MsgBox msg, style
+End Sub
 
 Public Function StationMatch(ByVal a As String, ByVal b As String) As Boolean
     Dim na As String, nb As String

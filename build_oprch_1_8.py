@@ -19,6 +19,7 @@ MASTER = ROOT / "OPRCH_Monitor_all.bas"
 
 MONITOR_PROCS = {
     "SetupOPRCHTemplate", "ExportOPRCHReport", "AnalyzeOPRCH",
+    "AnalyzeOPRCHSilent",
     "ClearOPRCHResults", "ApplyPresetsToConfig",
     "EnsureControlButtons", "AddOrReplaceButton", "WriteInstructionSheet",
     "InitOPRCHUI", "InitOPRCHUISilent",
@@ -129,7 +130,7 @@ def split_master(text: str) -> dict[str, str]:
             "Option Explicit",
             "",
             f"' {notes[key]}",
-            "' OPRCH_Monitor v1.8.5 — раздельный модуль (лимит VBA ~64 КБ).",
+            "' OPRCH_Monitor v1.8.6 — раздельный модуль (лимит VBA ~64 КБ).",
             "",
         ]
         if key == "Common":
@@ -232,7 +233,7 @@ def rebuild_xlsx(rows: list[dict]) -> Path:
     )
 
     lines = [
-        ("Мониторинг ОПРЧ v1.8.2 — готовый шаблон (любая станция / любое событие)", True, 14),
+        ("Мониторинг ОПРЧ v1.8.6 — готовый шаблон (любая станция / любое событие)", True, 14),
         ("", False, 11),
         ("Откройте этот файл как .xlsm с уже вшитыми макросами (Шаблон_мониторинг_ОПРЧ.xlsm).", False, 11),
         ("Подставьте свои данные в RawData и Config → кнопка «Запустить мониторинг ОПРЧ».", False, 11),
@@ -340,7 +341,7 @@ def rebuild_xlsx(rows: list[dict]) -> Path:
         wsCfg.cell(i, 37, 1)
         wsCfg.cell(i, 38, 0 if name == "Резерв" else 1)
 
-    wsCfg["W19"] = "Готовый .xlsm v1.8.2 — макросы внутри"
+    wsCfg["W19"] = "Готовый .xlsm v1.8.6 — макросы внутри"
     wsCfg["W19"].font = hdr_font
     wsCfg["W20"] = "Любая станция/событие: замените RawData и Config."
     wsCfg["W21"] = "Кнопка «Запустить мониторинг ОПРЧ» или Alt+F8 → AnalyzeOPRCH."
@@ -516,11 +517,7 @@ def build_xlsm_with_macros(xlsx: Path, modules: dict[str, str] | None = None) ->
 def main():
     text = MASTER.read_text("utf-8")
     # bump version stamp in comment if needed
-    if 'OPRCH_VERSION As String = "1.8.4"' in text:
-        text = text.replace('OPRCH_VERSION As String = "1.8.4"', 'OPRCH_VERSION As String = "1.8.5"')
-        text = text.replace("' Версия: 1.8.4", "' Версия: 1.8.5")
-        MASTER.write_text(text, encoding="utf-8")
-    elif 'OPRCH_VERSION As String = "1.8.5"' not in text:
+    if 'OPRCH_VERSION As String = "1.8.6"' not in text:
         raise SystemExit("Unexpected version in master")
 
     # syntax sanity: unmatched quotes in slim is hard; check basic patterns

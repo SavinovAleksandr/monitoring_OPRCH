@@ -3,7 +3,8 @@ Option Explicit
 
 
 
-Public Const OPRCH_VERSION As String = "1.8.5"
+Public Const OPRCH_VERSION As String = "1.8.6"
+Public gOPRCHQuiet As Boolean   ' True: без MsgBox (автопрогон / Silent)
 
 Public Const SH_RAW As String = "RawData"
 Public Const SH_CFG As String = "Config"
@@ -821,6 +822,14 @@ Public Function KdProfileText(ByVal equipType As String) As String
                     "; t2=" & Format(prof(4), "0") & "с Kд2=" & Format(prof(5), "0.00") & _
                     "; t3=" & Format(prof(6), "0") & "с Kд3=" & Format(prof(7), "0.00")
 End Function
+
+Public Sub OPRCHMsg(ByVal msg As String, Optional ByVal style As Long = vbInformation)
+    If gOPRCHQuiet Then Exit Sub
+    On Error Resume Next
+    If Not Application.Interactive Then Exit Sub
+    On Error GoTo 0
+    MsgBox msg, style
+End Sub
 
 Public Function StationMatch(ByVal a As String, ByVal b As String) As Boolean
     Dim na As String, nb As String
