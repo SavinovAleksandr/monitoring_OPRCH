@@ -48,14 +48,7 @@ Public Function AnalyzeOneGenerator(ByVal wsRaw As Worksheet, ByRef st As TSetti
     calcStep = "Учет Pmax/Pmin (резерв)"
     Dim pMaxEff As Double, pMinEff As Double
     Dim reservePlus As Double, reserveMinus As Double
-    pMaxEff = g.PMax
-    If pMaxEff <= 0 Then pMaxEff = g.PNom
-    pMinEff = g.PMin
-    If pMinEff < 0 Then pMinEff = 0
-    reservePlus = pMaxEff - p0
-    reserveMinus = p0 - pMinEff
-    If reservePlus < 0 Then reservePlus = 0
-    If reserveMinus < 0 Then reserveMinus = 0
+    FillReserves p0, g.PNom, g.PMax, g.PMin, pMaxEff, pMinEff, reservePlus, reserveMinus
 
     calcStep = "Контрольный интервал (Config W5, запасной): Pтреб/Pфакт"
     Dim dfRef As Double, dfrRef As Double, preqRefOrig As Double, preqRef As Double
@@ -154,7 +147,7 @@ Public Function AnalyzeOneGenerator(ByVal wsRaw As Worksheet, ByRef st As TSetti
 
     calcStep = "Проверка резерва 5 %Pном"
     Dim minReservePct As Double, minReserveMW As Double, needSign As Integer
-    minReservePct = 5#
+    minReservePct = MIN_PRIMARY_RESERVE_PCT
     minReserveMW = minReservePct / 100# * g.PNom
     needSign = SgnNZ(preqOrig)
     If needSign = 1 And reservePlus < minReserveMW Then
@@ -267,12 +260,12 @@ Public Sub EvaluateReaction15(ByVal wsRaw As Worksheet, ByRef st As TSettings, _
         Exit Sub
     End If
     baseRow = IIf(firstExceedRow > 0, firstExceedRow, startRow)
-    row15 = RowByTimeOffset(wsRaw, timeCol, baseRow, 15#)
+    row15 = RowByTimeOffset(wsRaw, timeCol, baseRow, REACT_WINDOW_SEC)
     dp15 = NzD(wsRaw.Cells(row15, pCol).Value, 0) - p0
     dfr15 = DeadbandDeviation(NzD(wsRaw.Cells(row15, fCol).Value, f0) - f0, fnch)
     preq15 = 0
     If dfr15 <> 0 And sPct > 0 Then
-        preq15 = PReqCalc(sPct, pNom, st.FNom, DynamicKdByTime(equipType, 15#), dfr15, st.MaxReqPct)
+        preq15 = PReqCalc(sPct, pNom, st.FNom, DynamicKdByTime(equipType, REACT_WINDOW_SEC), dfr15, st.MaxReqPct)
         preq15 = ClampReserve(preq15, reservePlus, reserveMinus)
     End If
     thrMW = React15ThresholdMW(st, pNom, preq15)
@@ -339,14 +332,13 @@ Public Sub EvaluateDeficit(ByVal wsRaw As Worksheet, ByRef st As TSettings, _
     defMaxPct = 0
     defSec = 0
     If pNom <= 0 Or sPct <= 0 Then Exit Sub
-    tol = 0.01 * pNom
+    tol = PowerTolMW(pNom)
     For r = startRow To endRow
         dFrT = DeadbandDeviation(NzD(wsRaw.Cells(r, fCol).Value, f0) - f0, fnch)
         If dFrT = 0 Then GoTo NextR
         tSec = SecBetween(wsRaw.Cells(startRow, timeCol).Value, wsRaw.Cells(r, timeCol).Value)
-        If tSec < 15 Then GoTo NextR
-        preqT = PReqCalc(sPct, pNom, st.FNom, DynamicKdByTime(equipType, tSec), dFrT, st.MaxReqPct)
-        preqT = ClampReserve(preqT, reservePlus, reserveMinus)
+        If tSec < REACT_WINDOW_SEC Then GoTo NextR
+        preqT = RequiredPrimaryMW(sPct, pNom, st.FNom, DynamicKdByTime(equipType, tSec), dFrT, st.MaxReqPct, reservePlus, reserveMinus)
         allowed = Abs(preqT) - tol
         If allowed <= 0 Then GoTo NextR
         have = SgnNZ(preqT) * (NzD(wsRaw.Cells(r, pCol).Value, 0) - p0)
@@ -583,7 +575,7 @@ Public Sub EvaluateApplicability(ByVal wsRaw As Worksheet, ByRef st As TSettings
                                   ByVal f0 As Double, ByRef res As TGenResult)
     Dim r As Long, d As Double, dMax As Double, rMax As Long
     Dim run02 As Double, best02 As Double, outSec As Double, dt As Double
-    Dim prevT As Double, curT As Double, minQuantSec As Double, isGpa As Boolean
+    Dim prevT As Double, curT As Double, minQuantSec As Double
     Dim txtQ As String, txtK As String
 
     dMax = 0: rMax = startRow
@@ -625,8 +617,7 @@ Public Sub EvaluateApplicability(ByVal wsRaw As Worksheet, ByRef st As TSettings
         Exit Sub
     End If
 
-    isGpa = (InStr(UCase$(g.EquipType), "ГПА") > 0 Or InStr(UCase$(g.EquipType), "ДГУ") > 0)
-    minQuantSec = IIf(isGpa, QUANT_MIN_SEC_GPA, QUANT_MIN_SEC_TES)
+    minQuantSec = QuantMinSecForEquip(g.EquipType)
 
     res.QuantApplicable = (best02 >= minQuantSec - 0.5)
     If res.QuantApplicable Then
@@ -683,7 +674,7 @@ Public Sub SelectEvaluationPoint(ByVal wsRaw As Worksheet, ByRef st As TSettings
     Dim fbRow As Long, fbDef As Double, fbDfrRow As Long, fbDfr As Double
     Dim fHere As Double
 
-    tol = 0.01 * g.PNom
+    tol = PowerTolMW(g.PNom)
     bestRow = 0: bestDef = -1E+99
     bestDfrRow = 0: bestDfr = 0
     anyQS = False
@@ -697,11 +688,11 @@ Public Sub SelectEvaluationPoint(ByVal wsRaw As Worksheet, ByRef st As TSettings
 
     For r = startRow To evEnd Step stepR
         tSec = SecBetween(wsRaw.Cells(startRow, timeCol).Value, wsRaw.Cells(r, timeCol).Value)
-        If tSec < 15 Then GoTo NextR
+        If tSec < REACT_WINDOW_SEC Then GoTo NextR
         fHere = NzD(wsRaw.Cells(r, fCol).Value, f0)
         dfrT = DeadbandDeviation(fHere - f0, g.Fnch)
         If dfrT <> 0 Then
-            preqT = ClampReserve(PReqCalc(g.SPct, g.PNom, st.FNom, DynamicKdByTime(g.EquipType, tSec), dfrT, st.MaxReqPct), reservePlus, reserveMinus)
+            preqT = RequiredPrimaryMW(g.SPct, g.PNom, st.FNom, DynamicKdByTime(g.EquipType, tSec), dfrT, st.MaxReqPct, reservePlus, reserveMinus)
             have = SgnNZ(preqT) * (AvgPowerBackward(wsRaw, pCol, timeCol, r, st.AvgWindowSec) - p0)
             deficit = (Abs(preqT) - tol) - have
             If deficit > fbDef Then fbDef = deficit: fbRow = r
@@ -711,7 +702,7 @@ Public Sub SelectEvaluationPoint(ByVal wsRaw As Worksheet, ByRef st As TSettings
         dfrT = DeadbandDeviation(fMean - f0, g.Fnch)
         If dfrT = 0 Then GoTo NextR
         anyQS = True
-        preqT = ClampReserve(PReqCalc(g.SPct, g.PNom, st.FNom, DynamicKdByTime(g.EquipType, tSec), dfrT, st.MaxReqPct), reservePlus, reserveMinus)
+        preqT = RequiredPrimaryMW(g.SPct, g.PNom, st.FNom, DynamicKdByTime(g.EquipType, tSec), dfrT, st.MaxReqPct, reservePlus, reserveMinus)
         have = SgnNZ(preqT) * (AvgPowerBackward(wsRaw, pCol, timeCol, r, st.AvgWindowSec) - p0)
         deficit = (Abs(preqT) - tol) - have
         If deficit > bestDef Then bestDef = deficit: bestRow = r
@@ -856,7 +847,7 @@ Public Sub EvaluateTelemetry(ByVal wsRaw As Worksheet, ByRef g As TGenCfg, ByRef
     res.TelemetryOK = True
     res.TelemetryNote = ""
     lastR = LastUsedRow(wsRaw)
-    r1 = RowByTimeOffset(wsRaw, timeCol, startRow, -15#)
+    r1 = RowByTimeOffset(wsRaw, timeCol, startRow, -REACT_WINDOW_SEC)
     If r1 < 2 Then r1 = 2
     If evEnd > lastR Then evEnd = lastR
     hasPrev = False
@@ -919,7 +910,7 @@ Public Sub ClassifyReactionType(ByVal wsRaw As Worksheet, ByRef st As TSettings,
     If needSign = 0 Then needSign = -SgnNZ(res.DfMaxEvent)
     If needSign = 0 Then Exit Sub
 
-    thr1 = 0.01 * g.PNom
+    thr1 = PowerTolMW(g.PNom)
     reserveNeed = IIf(needSign = 1, res.ReservePlus, res.ReserveMinus)
     lastR = LastUsedRow(wsRaw)
     If evEnd > lastR Then evEnd = lastR
@@ -1019,7 +1010,7 @@ Public Sub EvaluateQualitative(ByVal wsRaw As Worksheet, ByRef st As TSettings, 
     Else
         ratio5 = 0.5
     End If
-    tolMW = 0.01 * g.PNom
+    tolMW = PowerTolMW(g.PNom)
     target5 = signReq * pReqAbs * ratio5
     target10 = signReq * pReqAbs
 

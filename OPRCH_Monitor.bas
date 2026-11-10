@@ -2,7 +2,7 @@ Attribute VB_Name = "OPRCH_Monitor"
 Option Explicit
 
 ' Точки входа AnalyzeOPRCH. Импорт 6.
-' OPRCH_Monitor v1.8.4 — раздельный модуль (лимит VBA ~64 КБ).
+' OPRCH_Monitor v1.8.5 — раздельный модуль (лимит VBA ~64 КБ).
 
 Public Sub SetupOPRCHTemplate()
     Dim wsRaw As Worksheet, wsCfg As Worksheet, wsSum As Worksheet

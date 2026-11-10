@@ -129,7 +129,7 @@ def split_master(text: str) -> dict[str, str]:
             "Option Explicit",
             "",
             f"' {notes[key]}",
-            "' OPRCH_Monitor v1.8.4 — раздельный модуль (лимит VBA ~64 КБ).",
+            "' OPRCH_Monitor v1.8.5 — раздельный модуль (лимит VBA ~64 КБ).",
             "",
         ]
         if key == "Common":
@@ -516,11 +516,11 @@ def build_xlsm_with_macros(xlsx: Path, modules: dict[str, str] | None = None) ->
 def main():
     text = MASTER.read_text("utf-8")
     # bump version stamp in comment if needed
-    if 'OPRCH_VERSION As String = "1.8.3"' in text:
-        text = text.replace('OPRCH_VERSION As String = "1.8.3"', 'OPRCH_VERSION As String = "1.8.4"')
-        text = text.replace("' Версия: 1.8.3", "' Версия: 1.8.4")
+    if 'OPRCH_VERSION As String = "1.8.4"' in text:
+        text = text.replace('OPRCH_VERSION As String = "1.8.4"', 'OPRCH_VERSION As String = "1.8.5"')
+        text = text.replace("' Версия: 1.8.4", "' Версия: 1.8.5")
         MASTER.write_text(text, encoding="utf-8")
-    elif 'OPRCH_VERSION As String = "1.8.4"' not in text:
+    elif 'OPRCH_VERSION As String = "1.8.5"' not in text:
         raise SystemExit("Unexpected version in master")
 
     # syntax sanity: unmatched quotes in slim is hard; check basic patterns

@@ -663,7 +663,7 @@ NX:
     If Not m_KdProfileKeys Is Nothing Then
         For Each kk In m_KdProfileKeys
             On Error Resume Next
-            AppendLog "INFO", "Kä(t) " & CStr(kk), "Kä(15 ñ) = " & Format(DynamicKdByTime(CStr(kk), 15#), "0.00") & _
+            AppendLog "INFO", "Kä(t) " & CStr(kk), "Kä(15 ñ) = " & Format(DynamicKdByTime(CStr(kk), REACT_WINDOW_SEC), "0.00") & _
                       "; Kä(" & Format(st.QuantIntervalSec, "0") & " ñ) = " & Format(DynamicKdByTime(CStr(kk), st.QuantIntervalSec), "0.00") & _
                       " (ÌÓ: ÒÝÑ 0.50 äî 15 ñ -> 1.0 ê 300/360/420 ñ; ÏÃÓ 0.25 äî 15 ñ -> 0.5 ê 30 ñ -> 1.0 ê 120 ñ)"
             On Error GoTo 0

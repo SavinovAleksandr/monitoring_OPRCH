@@ -2,7 +2,7 @@ Attribute VB_Name = "OPRCH_Charts"
 Option Explicit
 
 ' Графики. Импорт 5.
-' OPRCH_Monitor v1.8.4 — раздельный модуль (лимит VBA ~64 КБ).
+' OPRCH_Monitor v1.8.5 — раздельный модуль (лимит VBA ~64 КБ).
 
 Public Sub FillMarkerColumn(ByVal ws As Worksheet, ByVal rr1 As Long, ByVal rr2 As Long, _
                              ByVal wsRaw As Worksheet, ByVal timeCol As Long, _
@@ -224,7 +224,7 @@ Public Sub ApplyChartAxesFormat(ByVal ch As Chart, ByVal wsData As Worksheet, By
     n = r2 - r1 + 1
     spanSec = SecBetween(wsData.Cells(r1, 1).Value, wsData.Cells(r2, 1).Value)
     If spanSec > 0 And n > 1 Then
-        ptsPer15 = CLng(15# * (n - 1) / spanSec)
+        ptsPer15 = CLng(REACT_WINDOW_SEC * (n - 1) / spanSec)
     Else
         ptsPer15 = 15
     End If

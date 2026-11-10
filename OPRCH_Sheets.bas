@@ -2,7 +2,7 @@ Attribute VB_Name = "OPRCH_Sheets"
 Option Explicit
 
 ' Summary/Log/Протокол/листы генераторов. Импорт 4.
-' OPRCH_Monitor v1.8.4 — раздельный модуль (лимит VBA ~64 КБ).
+' OPRCH_Monitor v1.8.5 — раздельный модуль (лимит VBA ~64 КБ).
 
 Public Sub AddProtocolLine(ByVal s As String)
     If m_Protocol Is Nothing Then Set m_Protocol = New Collection
@@ -699,7 +699,7 @@ NX:
     If Not m_KdProfileKeys Is Nothing Then
         For Each kk In m_KdProfileKeys
             On Error Resume Next
-            AppendLog "INFO", "Kд(t) " & CStr(kk), "Kд(15 с) = " & Format(DynamicKdByTime(CStr(kk), 15#), "0.00") & _
+            AppendLog "INFO", "Kд(t) " & CStr(kk), "Kд(15 с) = " & Format(DynamicKdByTime(CStr(kk), REACT_WINDOW_SEC), "0.00") & _
                       "; Kд(" & Format(st.QuantIntervalSec, "0") & " с) = " & Format(DynamicKdByTime(CStr(kk), st.QuantIntervalSec), "0.00") & _
                       " (МУ: ТЭС 0.50 до 15 с -> 1.0 к 300/360/420 с; ПГУ 0.25 до 15 с -> 0.5 к 30 с -> 1.0 к 120 с)"
             On Error GoTo 0

@@ -7,14 +7,15 @@ Option Explicit
 ' Per-station:    data sheet <Ст>_Сумма[_<Пп>] +  chart sheet <...>_Граф
 ' Extra sheets:   Summary, Log
 '
-' Версия: 1.8.4
+' Версия: 1.8.5
 ' Универсальный мониторинг: любая станция / любое событие через RawData + Config.
 ' Норматив: Прил. 14 (Авария) и Прил. 1 (Испытание). Вкладки «Запрос» нет.
+' 1.8.5: сверка с МУ (Прил. 1/14): константы, ГЭС в 4.1.2, общие хелперы.
 ' 1.8.4: InitOPRCHUI + Workbook_Open; кнопки совместимы с Windows Excel.
 ' 1.8.3: xlsm code page 1251; Dictionary -> Collection.
 ' ==========================================================
 
-Public Const OPRCH_VERSION As String = "1.8.4"
+Public Const OPRCH_VERSION As String = "1.8.5"
 
 Private Const SH_RAW As String = "RawData"
 Private Const SH_CFG As String = "Config"
@@ -41,6 +42,9 @@ Private Const OSC_MIN_AMPL_PCT As Double = 1#      ' п. 4.2.14.4: амплит�
 Private Const TELEM_MAX_REPEAT As Long = 11        ' Прил. 1 п. 6.1.8.3: не более 11 одинаковых подряд
 Private Const H15_REF As Double = 0.3              ' ориентир для h(15 с) (Приложение п. 6.2, справочно)
 Private Const EVENT_MIN_OUTSIDE_SEC As Double = 5# ' фильтр коротких выбросов частоты при поиске событий
+Private Const REACT_WINDOW_SEC As Double = 15#     ' п. 4.2.11 / переходный участок: первые 15 с
+Private Const PNOM_TOL_FRAC As Double = 0.01       ' п. 4.2.7/4.2.8: допуск 1 %Pном
+Private Const MIN_PRIMARY_RESERVE_PCT As Double = 5# ' ориентир резерва первичного регулирования
 
 Private m_LogRow As Long
 Private m_KdProfiles As Collection   ' key=EQUIPTYPE, value=Array(t0,kd0,...)
@@ -627,14 +631,7 @@ Private Function AnalyzeOneGenerator(ByVal wsRaw As Worksheet, ByRef st As TSett
     calcStep = "Учет Pmax/Pmin (резерв)"
     Dim pMaxEff As Double, pMinEff As Double
     Dim reservePlus As Double, reserveMinus As Double
-    pMaxEff = g.PMax
-    If pMaxEff <= 0 Then pMaxEff = g.PNom
-    pMinEff = g.PMin
-    If pMinEff < 0 Then pMinEff = 0
-    reservePlus = pMaxEff - p0
-    reserveMinus = p0 - pMinEff
-    If reservePlus < 0 Then reservePlus = 0
-    If reserveMinus < 0 Then reserveMinus = 0
+    FillReserves p0, g.PNom, g.PMax, g.PMin, pMaxEff, pMinEff, reservePlus, reserveMinus
 
     calcStep = "Контрольный интервал (Config W5, запасной): Pтреб/Pфакт"
     Dim dfRef As Double, dfrRef As Double, preqRefOrig As Double, preqRef As Double
@@ -743,7 +740,7 @@ Private Function AnalyzeOneGenerator(ByVal wsRaw As Worksheet, ByRef st As TSett
     ' WARN при недостаточном резерве в нужную сторону (порог 5 %Pном)
     calcStep = "Проверка резерва 5 %Pном"
     Dim minReservePct As Double, minReserveMW As Double, needSign As Integer
-    minReservePct = 5#
+    minReservePct = MIN_PRIMARY_RESERVE_PCT
     minReserveMW = minReservePct / 100# * g.PNom
     needSign = SgnNZ(preqOrig)
     If needSign = 1 And reservePlus < minReserveMW Then
@@ -869,13 +866,13 @@ Private Sub EvaluateReaction15(ByVal wsRaw As Worksheet, ByRef st As TSettings, 
         Exit Sub
     End If
     baseRow = IIf(firstExceedRow > 0, firstExceedRow, startRow)
-    row15 = RowByTimeOffset(wsRaw, timeCol, baseRow, 15#)
+    row15 = RowByTimeOffset(wsRaw, timeCol, baseRow, REACT_WINDOW_SEC)
     dp15 = NzD(wsRaw.Cells(row15, pCol).Value, 0) - p0
     ' Требуемая мощность на 15-й секунде по текущей частоте (Kд(15 с))
     dfr15 = DeadbandDeviation(NzD(wsRaw.Cells(row15, fCol).Value, f0) - f0, fnch)
     preq15 = 0
     If dfr15 <> 0 And sPct > 0 Then
-        preq15 = PReqCalc(sPct, pNom, st.FNom, DynamicKdByTime(equipType, 15#), dfr15, st.MaxReqPct)
+        preq15 = PReqCalc(sPct, pNom, st.FNom, DynamicKdByTime(equipType, REACT_WINDOW_SEC), dfr15, st.MaxReqPct)
         preq15 = ClampReserve(preq15, reservePlus, reserveMinus)
     End If
     thrMW = React15ThresholdMW(st, pNom, preq15)
@@ -950,15 +947,14 @@ Private Sub EvaluateDeficit(ByVal wsRaw As Worksheet, ByRef st As TSettings, _
     defMaxPct = 0
     defSec = 0
     If pNom <= 0 Or sPct <= 0 Then Exit Sub
-    tol = 0.01 * pNom
+    tol = PowerTolMW(pNom)
     For r = startRow To endRow
         dFrT = DeadbandDeviation(NzD(wsRaw.Cells(r, fCol).Value, f0) - f0, fnch)
         If dFrT = 0 Then GoTo NextR
         tSec = SecBetween(wsRaw.Cells(startRow, timeCol).Value, wsRaw.Cells(r, timeCol).Value)
         ' первые 15 с - переходный участок, оценивается отдельно по п. 4.2.11 (реакция РЧВ)
-        If tSec < 15 Then GoTo NextR
-        preqT = PReqCalc(sPct, pNom, st.FNom, DynamicKdByTime(equipType, tSec), dFrT, st.MaxReqPct)
-        preqT = ClampReserve(preqT, reservePlus, reserveMinus)
+        If tSec < REACT_WINDOW_SEC Then GoTo NextR
+        preqT = RequiredPrimaryMW(sPct, pNom, st.FNom, DynamicKdByTime(equipType, tSec), dFrT, st.MaxReqPct, reservePlus, reserveMinus)
         allowed = Abs(preqT) - tol
         If allowed <= 0 Then GoTo NextR
         have = SgnNZ(preqT) * (NzD(wsRaw.Cells(r, pCol).Value, 0) - p0)
@@ -1310,7 +1306,7 @@ Private Sub EvaluateApplicability(ByVal wsRaw As Worksheet, ByRef st As TSetting
                                   ByVal f0 As Double, ByRef res As TGenResult)
     Dim r As Long, d As Double, dMax As Double, rMax As Long
     Dim run02 As Double, best02 As Double, outSec As Double, dt As Double
-    Dim prevT As Double, curT As Double, minQuantSec As Double, isGpa As Boolean
+    Dim prevT As Double, curT As Double, minQuantSec As Double
     Dim txtQ As String, txtK As String
 
     dMax = 0: rMax = startRow
@@ -1352,8 +1348,7 @@ Private Sub EvaluateApplicability(ByVal wsRaw As Worksheet, ByRef st As TSetting
         Exit Sub
     End If
 
-    isGpa = (InStr(UCase$(g.EquipType), "ГПА") > 0 Or InStr(UCase$(g.EquipType), "ДГУ") > 0)
-    minQuantSec = IIf(isGpa, QUANT_MIN_SEC_GPA, QUANT_MIN_SEC_TES)
+    minQuantSec = QuantMinSecForEquip(g.EquipType)
 
     ' п. 4.1.2: |dF| >= 0.2 Гц не менее 30 с (ТЭС) / 1 мин (ГПА, ДГУ)
     res.QuantApplicable = (best02 >= minQuantSec - 0.5)
@@ -1420,7 +1415,7 @@ Private Sub SelectEvaluationPoint(ByVal wsRaw As Worksheet, ByRef st As TSetting
     Dim fbRow As Long, fbDef As Double, fbDfrRow As Long, fbDfr As Double
     Dim fHere As Double
 
-    tol = 0.01 * g.PNom
+    tol = PowerTolMW(g.PNom)
     bestRow = 0: bestDef = -1E+99
     bestDfrRow = 0: bestDfr = 0
     anyQS = False
@@ -1435,12 +1430,12 @@ Private Sub SelectEvaluationPoint(ByVal wsRaw As Worksheet, ByRef st As TSetting
 
     For r = startRow To evEnd Step stepR
         tSec = SecBetween(wsRaw.Cells(startRow, timeCol).Value, wsRaw.Cells(r, timeCol).Value)
-        If tSec < 15 Then GoTo NextR
+        If tSec < REACT_WINDOW_SEC Then GoTo NextR
         fHere = NzD(wsRaw.Cells(r, fCol).Value, f0)
         ' запасной перебор по фактической частоте в точке (без требования QS)
         dfrT = DeadbandDeviation(fHere - f0, g.Fnch)
         If dfrT <> 0 Then
-            preqT = ClampReserve(PReqCalc(g.SPct, g.PNom, st.FNom, DynamicKdByTime(g.EquipType, tSec), dfrT, st.MaxReqPct), reservePlus, reserveMinus)
+            preqT = RequiredPrimaryMW(g.SPct, g.PNom, st.FNom, DynamicKdByTime(g.EquipType, tSec), dfrT, st.MaxReqPct, reservePlus, reserveMinus)
             have = SgnNZ(preqT) * (AvgPowerBackward(wsRaw, pCol, timeCol, r, st.AvgWindowSec) - p0)
             deficit = (Abs(preqT) - tol) - have
             If deficit > fbDef Then fbDef = deficit: fbRow = r
@@ -1450,7 +1445,7 @@ Private Sub SelectEvaluationPoint(ByVal wsRaw As Worksheet, ByRef st As TSetting
         dfrT = DeadbandDeviation(fMean - f0, g.Fnch)
         If dfrT = 0 Then GoTo NextR
         anyQS = True
-        preqT = ClampReserve(PReqCalc(g.SPct, g.PNom, st.FNom, DynamicKdByTime(g.EquipType, tSec), dfrT, st.MaxReqPct), reservePlus, reserveMinus)
+        preqT = RequiredPrimaryMW(g.SPct, g.PNom, st.FNom, DynamicKdByTime(g.EquipType, tSec), dfrT, st.MaxReqPct, reservePlus, reserveMinus)
         have = SgnNZ(preqT) * (AvgPowerBackward(wsRaw, pCol, timeCol, r, st.AvgWindowSec) - p0)
         deficit = (Abs(preqT) - tol) - have
         If deficit > bestDef Then bestDef = deficit: bestRow = r
@@ -1609,7 +1604,7 @@ Private Sub EvaluateTelemetry(ByVal wsRaw As Worksheet, ByRef g As TGenCfg, ByRe
     res.TelemetryOK = True
     res.TelemetryNote = ""
     lastR = LastUsedRow(wsRaw)
-    r1 = RowByTimeOffset(wsRaw, timeCol, startRow, -15#)
+    r1 = RowByTimeOffset(wsRaw, timeCol, startRow, -REACT_WINDOW_SEC)
     If r1 < 2 Then r1 = 2
     If evEnd > lastR Then evEnd = lastR
     hasPrev = False
@@ -1677,7 +1672,7 @@ Private Sub ClassifyReactionType(ByVal wsRaw As Worksheet, ByRef st As TSettings
     If needSign = 0 Then needSign = -SgnNZ(res.DfMaxEvent)
     If needSign = 0 Then Exit Sub
 
-    thr1 = 0.01 * g.PNom
+    thr1 = PowerTolMW(g.PNom)
     reserveNeed = IIf(needSign = 1, res.ReservePlus, res.ReserveMinus)
     lastR = LastUsedRow(wsRaw)
     If evEnd > lastR Then evEnd = lastR
@@ -2032,7 +2027,7 @@ Private Sub EvaluateQualitative(ByVal wsRaw As Worksheet, ByRef st As TSettings,
     Else
         ratio5 = 0.5
     End If
-    tolMW = 0.01 * g.PNom
+    tolMW = PowerTolMW(g.PNom)
     target5 = signReq * pReqAbs * ratio5
     target10 = signReq * pReqAbs
 
@@ -2692,7 +2687,7 @@ Private Sub ApplyChartAxesFormat(ByVal ch As Chart, ByVal wsData As Worksheet, B
     n = r2 - r1 + 1
     spanSec = SecBetween(wsData.Cells(r1, 1).Value, wsData.Cells(r2, 1).Value)
     If spanSec > 0 And n > 1 Then
-        ptsPer15 = CLng(15# * (n - 1) / spanSec)
+        ptsPer15 = CLng(REACT_WINDOW_SEC * (n - 1) / spanSec)
     Else
         ptsPer15 = 15
     End If
@@ -3110,7 +3105,7 @@ Private Sub BuildOneStationAggregateEvent(ByVal wsRaw As Worksheet, ByVal wsSumm
     If reserveMinus < 0 Then reserveMinus = 0
     dPmaxRel = pMaxSum - p0
     dPminRel = pMinSum - p0
-    tolSum = 0.01 * pNomSum
+    tolSum = PowerTolMW(pNomSum)
     defMaxPct = 0
     defSec = 0
     trRow = 0: trDef = -1E+99: anyQS = False: trDfrRow = 0: trDfrAbs = 0
@@ -3285,7 +3280,7 @@ Private Sub BuildOneStationAggregateEvent(ByVal wsRaw As Worksheet, ByVal wsSumm
     Dim r15Status As String, r15Pass As Boolean, r15Note As String
     Dim preq15Sum As Double, dfr15 As Double, anyOutside As Boolean
     baseRow = IIf(firstExceedRow > 0, firstExceedRow, startRow)
-    row15 = RowByTimeOffset(wsRaw, timeCol, baseRow, 15#)
+    row15 = RowByTimeOffset(wsRaw, timeCol, baseRow, REACT_WINDOW_SEC)
     dp15 = SumPowerAtRow(wsRaw, pCols, cnt, row15, st.WorkThresholdMW) - p0
     preq15Sum = 0
     anyOutside = False
@@ -3294,7 +3289,7 @@ Private Sub BuildOneStationAggregateEvent(ByVal wsRaw As Worksheet, ByVal wsSumm
             dfr15 = DeadbandDeviation(NzD(wsRaw.Cells(row15, freqCol).Value, f0) - f0, fnchArr(i))
             If dfr15 <> 0 Then
                 anyOutside = True
-                preq15Sum = preq15Sum + PReqCalc(sArr(i), pnomArr(i), st.FNom, DynamicKdByTime(etArr(i), 15#), dfr15, st.MaxReqPct)
+                preq15Sum = preq15Sum + PReqCalc(sArr(i), pnomArr(i), st.FNom, DynamicKdByTime(etArr(i), REACT_WINDOW_SEC), dfr15, st.MaxReqPct)
             End If
         End If
     Next i
@@ -4073,7 +4068,7 @@ NX:
     If Not m_KdProfileKeys Is Nothing Then
         For Each kk In m_KdProfileKeys
             On Error Resume Next
-            AppendLog "INFO", "Kд(t) " & CStr(kk), "Kд(15 с) = " & Format(DynamicKdByTime(CStr(kk), 15#), "0.00") & _
+            AppendLog "INFO", "Kд(t) " & CStr(kk), "Kд(15 с) = " & Format(DynamicKdByTime(CStr(kk), REACT_WINDOW_SEC), "0.00") & _
                       "; Kд(" & Format(st.QuantIntervalSec, "0") & " с) = " & Format(DynamicKdByTime(CStr(kk), st.QuantIntervalSec), "0.00") & _
                       " (МУ: ТЭС 0.50 до 15 с -> 1.0 к 300/360/420 с; ПГУ 0.25 до 15 с -> 0.5 к 30 с -> 1.0 к 120 с)"
             On Error GoTo 0
@@ -4287,6 +4282,48 @@ End Function
 Private Function DeadbandDeviation(ByVal dF As Double, ByVal fnch As Double) As Double
     If Abs(dF) <= fnch Then DeadbandDeviation = 0 Else DeadbandDeviation = Sgn(dF) * (Abs(dF) - fnch)
 End Function
+
+
+' Допуск по мощности 1 %Pном (п. 4.2.7 / 4.2.8)
+Private Function PowerTolMW(ByVal pNom As Double) As Double
+    PowerTolMW = PNOM_TOL_FRAC * pNom
+End Function
+
+' п. 4.1.2: для ГПА/ДГУ/ГЭС порог длительности |dF|>=0.2 Гц - 60 с, иначе 30 с (ТЭС)
+Private Function IsLongQuantUnit(ByVal equipType As String) As Boolean
+    Dim u As String
+    u = UCase$(Trim$(equipType))
+    IsLongQuantUnit = (InStr(u, "ГПА") > 0 Or InStr(u, "ДГУ") > 0 Or InStr(u, "ГЭС") > 0)
+End Function
+
+Private Function QuantMinSecForEquip(ByVal equipType As String) As Double
+    If IsLongQuantUnit(equipType) Then
+        QuantMinSecForEquip = QUANT_MIN_SEC_GPA
+    Else
+        QuantMinSecForEquip = QUANT_MIN_SEC_TES
+    End If
+End Function
+
+' Pтреб(t) по формуле МУ с Kд(t) и ограничением резервом
+Private Function RequiredPrimaryMW(ByVal sPct As Double, ByVal pNom As Double, ByVal fNom As Double, _
+                                   ByVal kd As Double, ByVal dfr As Double, ByVal maxReqPct As Double, _
+                                   ByVal reservePlus As Double, ByVal reserveMinus As Double) As Double
+    RequiredPrimaryMW = ClampReserve(PReqCalc(sPct, pNom, fNom, kd, dfr, maxReqPct), reservePlus, reserveMinus)
+End Function
+
+Private Sub FillReserves(ByVal p0 As Double, ByVal pNom As Double, ByVal pMax As Double, ByVal pMin As Double, _
+                         ByRef pMaxEff As Double, ByRef pMinEff As Double, _
+                         ByRef reservePlus As Double, ByRef reserveMinus As Double)
+    pMaxEff = pMax
+    If pMaxEff <= 0 Then pMaxEff = pNom
+    pMinEff = pMin
+    If pMinEff < 0 Then pMinEff = 0
+    reservePlus = pMaxEff - p0
+    reserveMinus = p0 - pMinEff
+    If reservePlus < 0 Then reservePlus = 0
+    If reserveMinus < 0 Then reserveMinus = 0
+End Sub
+
 
 Private Function SecBetween(ByVal t1 As Variant, ByVal t2 As Variant) As Double
     If IsDate(t1) And IsDate(t2) Then

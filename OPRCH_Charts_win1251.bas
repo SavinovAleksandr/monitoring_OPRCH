@@ -212,7 +212,7 @@ Public Sub ApplyChartAxesFormat(ByVal ch As Chart, ByVal wsData As Worksheet, By
     n = r2 - r1 + 1
     spanSec = SecBetween(wsData.Cells(r1, 1).Value, wsData.Cells(r2, 1).Value)
     If spanSec > 0 And n > 1 Then
-        ptsPer15 = CLng(15# * (n - 1) / spanSec)
+        ptsPer15 = CLng(REACT_WINDOW_SEC * (n - 1) / spanSec)
     Else
         ptsPer15 = 15
     End If

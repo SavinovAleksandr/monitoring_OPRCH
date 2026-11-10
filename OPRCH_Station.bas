@@ -2,7 +2,7 @@ Attribute VB_Name = "OPRCH_Station"
 Option Explicit
 
 ' Суммы станций (п. 4.2.10). Импорт 3.
-' OPRCH_Monitor v1.8.4 — раздельный модуль (лимит VBA ~64 КБ).
+' OPRCH_Monitor v1.8.5 — раздельный модуль (лимит VBA ~64 КБ).
 
 Public Sub BuildStationAggregates(ByVal wsRaw As Worksheet, ByVal wsCfg As Worksheet, ByVal wsSummary As Worksheet, _
                                    ByRef st As TSettings, ByRef outRow As Long)
@@ -223,7 +223,7 @@ Public Sub BuildOneStationAggregateEvent(ByVal wsRaw As Worksheet, ByVal wsSumma
     If reserveMinus < 0 Then reserveMinus = 0
     dPmaxRel = pMaxSum - p0
     dPminRel = pMinSum - p0
-    tolSum = 0.01 * pNomSum
+    tolSum = PowerTolMW(pNomSum)
     defMaxPct = 0
     defSec = 0
     trRow = 0: trDef = -1E+99: anyQS = False: trDfrRow = 0: trDfrAbs = 0
@@ -398,7 +398,7 @@ Public Sub BuildOneStationAggregateEvent(ByVal wsRaw As Worksheet, ByVal wsSumma
     Dim r15Status As String, r15Pass As Boolean, r15Note As String
     Dim preq15Sum As Double, dfr15 As Double, anyOutside As Boolean
     baseRow = IIf(firstExceedRow > 0, firstExceedRow, startRow)
-    row15 = RowByTimeOffset(wsRaw, timeCol, baseRow, 15#)
+    row15 = RowByTimeOffset(wsRaw, timeCol, baseRow, REACT_WINDOW_SEC)
     dp15 = SumPowerAtRow(wsRaw, pCols, cnt, row15, st.WorkThresholdMW) - p0
     preq15Sum = 0
     anyOutside = False
@@ -407,7 +407,7 @@ Public Sub BuildOneStationAggregateEvent(ByVal wsRaw As Worksheet, ByVal wsSumma
             dfr15 = DeadbandDeviation(NzD(wsRaw.Cells(row15, freqCol).Value, f0) - f0, fnchArr(i))
             If dfr15 <> 0 Then
                 anyOutside = True
-                preq15Sum = preq15Sum + PReqCalc(sArr(i), pnomArr(i), st.FNom, DynamicKdByTime(etArr(i), 15#), dfr15, st.MaxReqPct)
+                preq15Sum = preq15Sum + PReqCalc(sArr(i), pnomArr(i), st.FNom, DynamicKdByTime(etArr(i), REACT_WINDOW_SEC), dfr15, st.MaxReqPct)
             End If
         End If
     Next i

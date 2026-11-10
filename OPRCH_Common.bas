@@ -2,7 +2,7 @@ Attribute VB_Name = "OPRCH_Common"
 Option Explicit
 
 ' Типы, константы, общие функции. Импорт 1.
-' OPRCH_Monitor v1.8.4 — раздельный модуль (лимит VBA ~64 КБ).
+' OPRCH_Monitor v1.8.5 — раздельный модуль (лимит VBA ~64 КБ).
 
 ' ==========================================================
 ' OPRCH monitoring  (quantitative + qualitative)
@@ -10,14 +10,15 @@ Option Explicit
 ' Per-station:    data sheet <Ст>_Сумма[_<Пп>] +  chart sheet <...>_Граф
 ' Extra sheets:   Summary, Log
 '
-' Версия: 1.8.4
+' Версия: 1.8.5
 ' Универсальный мониторинг: любая станция / любое событие через RawData + Config.
 ' Норматив: Прил. 14 (Авария) и Прил. 1 (Испытание). Вкладки «Запрос» нет.
+' 1.8.5: сверка с МУ (Прил. 1/14): константы, ГЭС в 4.1.2, общие хелперы.
 ' 1.8.4: InitOPRCHUI + Workbook_Open; кнопки совместимы с Windows Excel.
 ' 1.8.3: xlsm code page 1251; Dictionary -> Collection.
 ' ==========================================================
 
-Public Const OPRCH_VERSION As String = "1.8.4"
+Public Const OPRCH_VERSION As String = "1.8.5"
 
 Public Const SH_RAW As String = "RawData"
 Public Const SH_CFG As String = "Config"
@@ -44,6 +45,9 @@ Public Const OSC_MIN_AMPL_PCT As Double = 1#      ' п. 4.2.14.4: амплиту
 Public Const TELEM_MAX_REPEAT As Long = 11        ' Прил. 1 п. 6.1.8.3: не более 11 одинаковых подряд
 Public Const H15_REF As Double = 0.3              ' ориентир для h(15 с) (Приложение п. 6.2, справочно)
 Public Const EVENT_MIN_OUTSIDE_SEC As Double = 5# ' фильтр коротких выбросов частоты при поиске событий
+Public Const REACT_WINDOW_SEC As Double = 15#     ' п. 4.2.11 / переходный участок: первые 15 с
+Public Const PNOM_TOL_FRAC As Double = 0.01       ' п. 4.2.7/4.2.8: допуск 1 %Pном
+Public Const MIN_PRIMARY_RESERVE_PCT As Double = 5# ' ориентир резерва первичного регулирования
 
 Public m_LogRow As Long
 Public m_KdProfiles As Collection   ' key=EQUIPTYPE, value=Array(t0,kd0,...)
@@ -713,6 +717,50 @@ End Function
 Public Function DeadbandDeviation(ByVal dF As Double, ByVal fnch As Double) As Double
     If Abs(dF) <= fnch Then DeadbandDeviation = 0 Else DeadbandDeviation = Sgn(dF) * (Abs(dF) - fnch)
 End Function
+
+
+' Допуск по мощности 1 %Pном (п. 4.2.7 / 4.2.8)
+
+Public Function PowerTolMW(ByVal pNom As Double) As Double
+    PowerTolMW = PNOM_TOL_FRAC * pNom
+End Function
+
+' п. 4.1.2: для ГПА/ДГУ/ГЭС порог длительности |dF|>=0.2 Гц - 60 с, иначе 30 с (ТЭС)
+
+Public Function IsLongQuantUnit(ByVal equipType As String) As Boolean
+    Dim u As String
+    u = UCase$(Trim$(equipType))
+    IsLongQuantUnit = (InStr(u, "ГПА") > 0 Or InStr(u, "ДГУ") > 0 Or InStr(u, "ГЭС") > 0)
+End Function
+
+Public Function QuantMinSecForEquip(ByVal equipType As String) As Double
+    If IsLongQuantUnit(equipType) Then
+        QuantMinSecForEquip = QUANT_MIN_SEC_GPA
+    Else
+        QuantMinSecForEquip = QUANT_MIN_SEC_TES
+    End If
+End Function
+
+' Pтреб(t) по формуле МУ с Kд(t) и ограничением резервом
+
+Public Function RequiredPrimaryMW(ByVal sPct As Double, ByVal pNom As Double, ByVal fNom As Double, _
+                                   ByVal kd As Double, ByVal dfr As Double, ByVal maxReqPct As Double, _
+                                   ByVal reservePlus As Double, ByVal reserveMinus As Double) As Double
+    RequiredPrimaryMW = ClampReserve(PReqCalc(sPct, pNom, fNom, kd, dfr, maxReqPct), reservePlus, reserveMinus)
+End Function
+
+Public Sub FillReserves(ByVal p0 As Double, ByVal pNom As Double, ByVal pMax As Double, ByVal pMin As Double, _
+                         ByRef pMaxEff As Double, ByRef pMinEff As Double, _
+                         ByRef reservePlus As Double, ByRef reserveMinus As Double)
+    pMaxEff = pMax
+    If pMaxEff <= 0 Then pMaxEff = pNom
+    pMinEff = pMin
+    If pMinEff < 0 Then pMinEff = 0
+    reservePlus = pMaxEff - p0
+    reserveMinus = p0 - pMinEff
+    If reservePlus < 0 Then reservePlus = 0
+    If reserveMinus < 0 Then reserveMinus = 0
+End Sub
 
 Public Function SecBetween(ByVal t1 As Variant, ByVal t2 As Variant) As Double
     If IsDate(t1) And IsDate(t2) Then
