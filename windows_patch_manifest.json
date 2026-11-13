@@ -1,0 +1,85 @@
+{
+  "version": "1.8.6-windows-fix",
+  "patches": [
+    {
+      "file": "OPRCH_Sheets.bas",
+      "replacements": [
+        {
+          "old": "        res.PReq, res.PFact, _\n        Round(res.AmplPctPnom, 2), res.AmplitudeTag, _",
+          "new": "        res.PReq, res.PFact, Round(res.AmplPctPnom, 2), res.AmplitudeTag, _"
+        },
+        {
+          "old": "        res.TransientType, res.NumExtrema, _\n        qualStatusStr, qualT5Str, qualT10Str, qualStStr, _",
+          "new": "        res.TransientType, res.NumExtrema, qualStatusStr, qualT5Str, qualT10Str, qualStStr, _"
+        },
+        {
+          "old": "        res.PMaxEff, res.PMinEff, res.ReservePlus, res.ReserveMinus, _\n        res.PReqOrig, limitStr, _",
+          "new": "        res.PMaxEff, res.PMinEff, res.ReservePlus, res.ReserveMinus, res.PReqOrig, limitStr, _"
+        },
+        {
+          "old": "Public Sub CollectOldOutputSheets(ByRef names As Collection)\n    Dim ws As Worksheet\n    For Each ws In ThisWorkbook.Worksheets\n        ' Универсальная книга: сохраняем только рабочие листы ввода/журнала.\n        ' Лист «Запрос» и прочие служебные вкладки при очистке/пересчёте удаляются.\n        If ws.Name <> SH_RAW And ws.Name <> SH_CFG And ws.Name <> SH_SUM And ws.Name <> SH_LOG _\n           And ws.Name <> SH_INSTR Then\n            names.Add ws.Name\n        End If\n    Next ws\nEnd Sub",
+          "new": "Public Sub CollectOldOutputSheets(ByRef names As Collection)\n    Dim wsSummary As Worksheet, ws As Worksheet\n    Dim r As Long, c As Long, nm As String\n    ' Удаляем только листы, перечисленные в старом Summary.\n    ' Нельзя удалять посторонние листы пользователя (в том числе «Запрос»).\n    On Error Resume Next\n    Set wsSummary = ThisWorkbook.Worksheets(SH_SUM)\n    On Error GoTo 0\n    If Not wsSummary Is Nothing Then\n        For r = 2 To LastUsedRow(wsSummary)\n            For c = 27 To 28  ' AA/AB: лист данных и графика\n                If Not IsError(wsSummary.Cells(r, c).Value) Then\n                    nm = Trim$(CStr(wsSummary.Cells(r, c).Value))\n                    If Len(nm) > 0 And nm <> SH_RAW And nm <> SH_CFG _\n                       And nm <> SH_SUM And nm <> SH_LOG And nm <> SH_INSTR Then\n                        Set ws = Nothing\n                        On Error Resume Next\n                        Set ws = ThisWorkbook.Worksheets(nm)\n                        If Not ws Is Nothing Then names.Add ws.Name, ws.Name\n                        On Error GoTo 0\n                    End If\n                End If\n            Next c\n        Next r\n    End If\n    Set ws = Nothing\n    On Error Resume Next\n    Set ws = ThisWorkbook.Worksheets(SH_PROT)\n    If Not ws Is Nothing Then names.Add ws.Name, ws.Name\n    On Error GoTo 0\nEnd Sub"
+        },
+        {
+          "old": "    Application.DisplayAlerts = False\n    For i = names.Count To 1 Step -1\n        On Error Resume Next\n        ThisWorkbook.Worksheets(CStr(names(i))).Delete\n        On Error GoTo 0\n    Next i\n    Application.DisplayAlerts = True",
+          "new": "    Dim alertsBefore As Boolean, failureText As String\n    alertsBefore = Application.DisplayAlerts\n    Application.DisplayAlerts = False\n    On Error GoTo CleanFail\n    For i = names.Count To 1 Step -1\n        ThisWorkbook.Worksheets(CStr(names(i))).Delete\n    Next i\n    Application.DisplayAlerts = alertsBefore\n    Exit Sub\nCleanFail:\n    failureText = Err.Description\n    Application.DisplayAlerts = alertsBefore\n    Err.Raise vbObjectError + 2130, \"DeleteOutputSheets\", _\n        \"Не удалось удалить старый выходной лист: \" & failureText"
+        }
+      ]
+    },
+    {
+      "file": "OPRCH_Monitor.bas",
+      "replacements": [
+        {
+          "old": "    Dim fCol As Long\n\n    t0Run = Timer",
+          "new": "    Dim fCol As Long\n    Dim previousCalculation As XlCalculation, previousUpdating As Boolean\n    Dim stateSaved As Boolean, failureNumber As Long, failureText As String\n\n    previousCalculation = Application.Calculation\n    previousUpdating = Application.ScreenUpdating\n    stateSaved = True\n    t0Run = Timer"
+        },
+        {
+          "old": "    Application.Calculation = xlCalculationAutomatic\n    Application.ScreenUpdating = True\n\n    OPRCHMsg",
+          "new": "    Application.Calculation = previousCalculation\n    Application.ScreenUpdating = previousUpdating\n\n    OPRCHMsg"
+        },
+        {
+          "old": "EH:\n    Application.Calculation = xlCalculationAutomatic\n    Application.ScreenUpdating = True\n    OPRCHMsg \"Ошибка AnalyzeOPRCH (\" & stepName & \"): \" & Err.Description, vbCritical\nEnd Sub",
+          "new": "EH:\n    failureNumber = Err.Number\n    failureText = Err.Description\n    On Error Resume Next\n    If stateSaved Then\n        Application.Calculation = previousCalculation\n        Application.ScreenUpdating = previousUpdating\n    End If\n    AppendLog \"ERROR\", stepName, \"Ошибка #\" & CStr(failureNumber) & \": \" & failureText\n    On Error GoTo 0\n    OPRCHMsg \"Ошибка AnalyzeOPRCH (\" & stepName & \", #\" & failureNumber & \"): \" & _\n             failureText & vbCrLf & \"Подробности: лист Log.\", vbCritical\nEnd Sub"
+        },
+        {
+          "old": "Public Sub InitOPRCHUISilent()\n    On Error Resume Next\n    gOPRCHQuiet = True\n    WriteInstructionSheet\n    EnsureControlButtons EnsureSheet(SH_CFG)\n    EnsureControlButtons EnsureSheet(SH_INSTR)\nEnd Sub",
+          "new": "Public Sub InitOPRCHUISilent()\n    Dim previousQuiet As Boolean, errorInfo As String\n    previousQuiet = gOPRCHQuiet\n    gOPRCHQuiet = True\n    On Error GoTo InitFail\n    WriteInstructionSheet\n    EnsureControlButtons EnsureSheet(SH_CFG)\n    EnsureControlButtons EnsureSheet(SH_INSTR)\n    gOPRCHQuiet = previousQuiet\n    Exit Sub\nInitFail:\n    errorInfo = \"Ошибка инициализации UI #\" & CStr(Err.Number) & \": \" & Err.Description\n    On Error Resume Next\n    AppendLog \"ERROR\", \"InitOPRCHUISilent\", errorInfo\n    gOPRCHQuiet = previousQuiet\nEnd Sub"
+        },
+        {
+          "old": "    Application.DisplayAlerts = False\n    DeleteOutputSheets targetSheets\n    Application.DisplayAlerts = True\n    MsgBox",
+          "new": "    DeleteOutputSheets targetSheets\n    MsgBox"
+        }
+      ]
+    },
+    {
+      "file": "build_oprch_1_8.py",
+      "replacements": [
+        {
+          "old": "import subprocess\nimport zipfile",
+          "new": "import subprocess\nimport tempfile\nimport zipfile"
+        },
+        {
+          "old": "ROOT = Path(\"/Users/asavinov/ОПРЧ/ОПРЧ\")",
+          "new": "ROOT = Path(__file__).resolve().parent"
+        },
+        {
+          "old": "shell = Path(\"/tmp/oprch_vba_shell.xlsm\")",
+          "new": "shell = Path(tempfile.gettempdir()) / \"oprch_vba_shell.xlsm\""
+        }
+      ]
+    },
+    {
+      "file": "OPRCH_Install.bas",
+      "replacements": [
+        {
+          "old": "Установщик OPRCH v1.8.2",
+          "new": "Установщик OPRCH v1.8.6 (Windows fixes)"
+        },
+        {
+          "old": "Макросы OPRCH v1.8.2 установлены.",
+          "new": "Макросы OPRCH v1.8.6 установлены."
+        }
+      ]
+    }
+  ]
+}

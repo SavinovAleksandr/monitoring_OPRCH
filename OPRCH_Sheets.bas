@@ -301,16 +301,13 @@ Public Sub WriteSummaryRow(ByVal ws As Worksheet, ByVal r As Long, ByRef g As TG
         res.StartTime, res.FirstExceedTime, _
         res.P0, res.PTek, res.PsteadyAvg, _
         res.Df, res.Dfr, _
-        res.PReq, res.PFact, _
-        Round(res.AmplPctPnom, 2), res.AmplitudeTag, _
+        res.PReq, res.PFact, Round(res.AmplPctPnom, 2), res.AmplitudeTag, _
         res.QuantPct, quantStatusStr, overshootStr, _
-        res.TransientType, res.NumExtrema, _
-        qualStatusStr, qualT5Str, qualT10Str, qualStStr, _
+        res.TransientType, res.NumExtrema, qualStatusStr, qualT5Str, qualT10Str, qualStStr, _
         res.QualFailedList, _
         FormatSecOrNA(res.T5FactSec), FormatSecOrNA(res.T10FactSec), _
         GeneratorSheetName(g, res.EventIdx), GeneratorChartSheetName(g, res.EventIdx), _
-        res.PMaxEff, res.PMinEff, res.ReservePlus, res.ReserveMinus, _
-        res.PReqOrig, limitStr, _
+        res.PMaxEff, res.PMinEff, res.ReservePlus, res.ReserveMinus, res.PReqOrig, limitStr, _
         note, _
         res.React15Status, Round(res.DP15, 3), Round(res.DeficitMaxPct, 2), Round(res.DeficitSec, 0), _
         res.Verdict, _
@@ -712,28 +709,55 @@ End Sub
 ' ==========================================================
 
 Public Sub CollectOldOutputSheets(ByRef names As Collection)
-    Dim ws As Worksheet
-    For Each ws In ThisWorkbook.Worksheets
-        ' Универсальная книга: сохраняем только рабочие листы ввода/журнала.
-        ' Лист «Запрос» и прочие служебные вкладки при очистке/пересчёте удаляются.
-        If ws.Name <> SH_RAW And ws.Name <> SH_CFG And ws.Name <> SH_SUM And ws.Name <> SH_LOG _
-           And ws.Name <> SH_INSTR Then
-            names.Add ws.Name
-        End If
-    Next ws
+    Dim wsSummary As Worksheet, ws As Worksheet
+    Dim r As Long, c As Long, nm As String
+    ' Удаляем только листы, перечисленные в старом Summary.
+    ' Нельзя удалять посторонние листы пользователя (в том числе «Запрос»).
+    On Error Resume Next
+    Set wsSummary = ThisWorkbook.Worksheets(SH_SUM)
+    On Error GoTo 0
+    If Not wsSummary Is Nothing Then
+        For r = 2 To LastUsedRow(wsSummary)
+            For c = 27 To 28  ' AA/AB: лист данных и графика
+                If Not IsError(wsSummary.Cells(r, c).Value) Then
+                    nm = Trim$(CStr(wsSummary.Cells(r, c).Value))
+                    If Len(nm) > 0 And nm <> SH_RAW And nm <> SH_CFG _
+                       And nm <> SH_SUM And nm <> SH_LOG And nm <> SH_INSTR Then
+                        Set ws = Nothing
+                        On Error Resume Next
+                        Set ws = ThisWorkbook.Worksheets(nm)
+                        If Not ws Is Nothing Then names.Add ws.Name, ws.Name
+                        On Error GoTo 0
+                    End If
+                End If
+            Next c
+        Next r
+    End If
+    Set ws = Nothing
+    On Error Resume Next
+    Set ws = ThisWorkbook.Worksheets(SH_PROT)
+    If Not ws Is Nothing Then names.Add ws.Name, ws.Name
+    On Error GoTo 0
 End Sub
 
 ' Краткая инструкция на отдельном листе (не удаляется при AnalyzeOPRCH / ClearOPRCHResults)
 
 Public Sub DeleteOutputSheets(ByVal names As Collection)
     Dim i As Long
+    Dim alertsBefore As Boolean, failureText As String
+    alertsBefore = Application.DisplayAlerts
     Application.DisplayAlerts = False
+    On Error GoTo CleanFail
     For i = names.Count To 1 Step -1
-        On Error Resume Next
         ThisWorkbook.Worksheets(CStr(names(i))).Delete
-        On Error GoTo 0
     Next i
-    Application.DisplayAlerts = True
+    Application.DisplayAlerts = alertsBefore
+    Exit Sub
+CleanFail:
+    failureText = Err.Description
+    Application.DisplayAlerts = alertsBefore
+    Err.Raise vbObjectError + 2130, "DeleteOutputSheets", _
+        "Не удалось удалить старый выходной лист: " & failureText
 End Sub
 
 Public Function GeneratorSheetName(ByRef g As TGenCfg, ByVal evIdx As Long) As String

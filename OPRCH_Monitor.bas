@@ -150,7 +150,12 @@ Public Sub AnalyzeOPRCH()
     Dim t0Run As Double
     Dim evList() As TEvent, nEv As Long, k As Long
     Dim fCol As Long
+    Dim previousCalculation As XlCalculation, previousUpdating As Boolean
+    Dim stateSaved As Boolean, failureNumber As Long, failureText As String
 
+    previousCalculation = Application.Calculation
+    previousUpdating = Application.ScreenUpdating
+    stateSaved = True
     t0Run = Timer
     stepName = "Подготовка листов"
     Set wsRaw = GetRequiredSheet(SH_RAW)
@@ -280,17 +285,25 @@ NextGen:
     FinalizeLog
     EnsureControlButtons wsCfg
 
-    Application.Calculation = xlCalculationAutomatic
-    Application.ScreenUpdating = True
+    Application.Calculation = previousCalculation
+    Application.ScreenUpdating = previousUpdating
 
     OPRCHMsg "Мониторинг ОПРЧ завершен (v" & OPRCH_VERSION & "). Время: " _
         & Format(Timer - t0Run, "0.0") & " c.", vbInformation
     Exit Sub
 
 EH:
-    Application.Calculation = xlCalculationAutomatic
-    Application.ScreenUpdating = True
-    OPRCHMsg "Ошибка AnalyzeOPRCH (" & stepName & "): " & Err.Description, vbCritical
+    failureNumber = Err.Number
+    failureText = Err.Description
+    On Error Resume Next
+    If stateSaved Then
+        Application.Calculation = previousCalculation
+        Application.ScreenUpdating = previousUpdating
+    End If
+    AppendLog "ERROR", stepName, "Ошибка #" & CStr(failureNumber) & ": " & failureText
+    On Error GoTo 0
+    OPRCHMsg "Ошибка AnalyzeOPRCH (" & stepName & ", #" & failureNumber & "): " & _
+             failureText & vbCrLf & "Подробности: лист Log.", vbCritical
 End Sub
 
 ' Автопрогон / песочница: тот же расчёт, без диалогов MsgBox.
@@ -311,9 +324,7 @@ Public Sub ClearOPRCHResults()
     Dim targetSheets As Collection
     Set targetSheets = New Collection
     CollectOldOutputSheets targetSheets
-    Application.DisplayAlerts = False
     DeleteOutputSheets targetSheets
-    Application.DisplayAlerts = True
     MsgBox "Результаты очищены (" & targetSheets.Count & " вкладок).", vbInformation
 End Sub
 
@@ -408,11 +419,20 @@ EH:
 End Sub
 
 Public Sub InitOPRCHUISilent()
-    On Error Resume Next
+    Dim previousQuiet As Boolean, errorInfo As String
+    previousQuiet = gOPRCHQuiet
     gOPRCHQuiet = True
+    On Error GoTo InitFail
     WriteInstructionSheet
     EnsureControlButtons EnsureSheet(SH_CFG)
     EnsureControlButtons EnsureSheet(SH_INSTR)
+    gOPRCHQuiet = previousQuiet
+    Exit Sub
+InitFail:
+    errorInfo = "Ошибка инициализации UI #" & CStr(Err.Number) & ": " & Err.Description
+    On Error Resume Next
+    AppendLog "ERROR", "InitOPRCHUISilent", errorInfo
+    gOPRCHQuiet = previousQuiet
 End Sub
 
 ' Единая точка диалогов: в тихом режиме ничего не показывает.

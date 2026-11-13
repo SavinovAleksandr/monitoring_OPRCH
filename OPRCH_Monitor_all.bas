@@ -401,7 +401,12 @@ Public Sub AnalyzeOPRCH()
     Dim t0Run As Double
     Dim evList() As TEvent, nEv As Long, k As Long
     Dim fCol As Long
+    Dim previousCalculation As XlCalculation, previousUpdating As Boolean
+    Dim stateSaved As Boolean, failureNumber As Long, failureText As String
 
+    previousCalculation = Application.Calculation
+    previousUpdating = Application.ScreenUpdating
+    stateSaved = True
     t0Run = Timer
     stepName = "Подготовка листов"
     Set wsRaw = GetRequiredSheet(SH_RAW)
@@ -531,17 +536,25 @@ NextGen:
     FinalizeLog
     EnsureControlButtons wsCfg
 
-    Application.Calculation = xlCalculationAutomatic
-    Application.ScreenUpdating = True
+    Application.Calculation = previousCalculation
+    Application.ScreenUpdating = previousUpdating
 
     OPRCHMsg "Мониторинг ОПРЧ завершен (v" & OPRCH_VERSION & "). Время: " _
         & Format(Timer - t0Run, "0.0") & " c.", vbInformation
     Exit Sub
 
 EH:
-    Application.Calculation = xlCalculationAutomatic
-    Application.ScreenUpdating = True
-    OPRCHMsg "Ошибка AnalyzeOPRCH (" & stepName & "): " & Err.Description, vbCritical
+    failureNumber = Err.Number
+    failureText = Err.Description
+    On Error Resume Next
+    If stateSaved Then
+        Application.Calculation = previousCalculation
+        Application.ScreenUpdating = previousUpdating
+    End If
+    AppendLog "ERROR", stepName, "Ошибка #" & CStr(failureNumber) & ": " & failureText
+    On Error GoTo 0
+    OPRCHMsg "Ошибка AnalyzeOPRCH (" & stepName & ", #" & failureNumber & "): " & _
+             failureText & vbCrLf & "Подробности: лист Log.", vbCritical
 End Sub
 
 ' Автопрогон / песочница: тот же расчёт, без диалогов MsgBox.
@@ -561,9 +574,7 @@ Public Sub ClearOPRCHResults()
     Dim targetSheets As Collection
     Set targetSheets = New Collection
     CollectOldOutputSheets targetSheets
-    Application.DisplayAlerts = False
     DeleteOutputSheets targetSheets
-    Application.DisplayAlerts = True
     MsgBox "Результаты очищены (" & targetSheets.Count & " вкладок).", vbInformation
 End Sub
 
@@ -3686,16 +3697,13 @@ Private Sub WriteSummaryRow(ByVal ws As Worksheet, ByVal r As Long, ByRef g As T
         res.StartTime, res.FirstExceedTime, _
         res.P0, res.PTek, res.PsteadyAvg, _
         res.Df, res.Dfr, _
-        res.PReq, res.PFact, _
-        Round(res.AmplPctPnom, 2), res.AmplitudeTag, _
+        res.PReq, res.PFact, Round(res.AmplPctPnom, 2), res.AmplitudeTag, _
         res.QuantPct, quantStatusStr, overshootStr, _
-        res.TransientType, res.NumExtrema, _
-        qualStatusStr, qualT5Str, qualT10Str, qualStStr, _
+        res.TransientType, res.NumExtrema, qualStatusStr, qualT5Str, qualT10Str, qualStStr, _
         res.QualFailedList, _
         FormatSecOrNA(res.T5FactSec), FormatSecOrNA(res.T10FactSec), _
         GeneratorSheetName(g, res.EventIdx), GeneratorChartSheetName(g, res.EventIdx), _
-        res.PMaxEff, res.PMinEff, res.ReservePlus, res.ReserveMinus, _
-        res.PReqOrig, limitStr, _
+        res.PMaxEff, res.PMinEff, res.ReservePlus, res.ReserveMinus, res.PReqOrig, limitStr, _
         note, _
         res.React15Status, Round(res.DP15, 3), Round(res.DeficitMaxPct, 2), Round(res.DeficitSec, 0), _
         res.Verdict, _
@@ -4575,15 +4583,35 @@ End Sub
 ' ==========================================================
 
 Private Sub CollectOldOutputSheets(ByRef names As Collection)
-    Dim ws As Worksheet
-    For Each ws In ThisWorkbook.Worksheets
-        ' Универсальная книга: сохраняем только рабочие листы ввода/журнала.
-        ' Лист «Запрос» и прочие служебные вкладки при очистке/пересчёте удаляются.
-        If ws.Name <> SH_RAW And ws.Name <> SH_CFG And ws.Name <> SH_SUM And ws.Name <> SH_LOG _
-           And ws.Name <> SH_INSTR Then
-            names.Add ws.Name
-        End If
-    Next ws
+    Dim wsSummary As Worksheet, ws As Worksheet
+    Dim r As Long, c As Long, nm As String
+    ' Удаляем только листы, перечисленные в старом Summary.
+    ' Нельзя удалять посторонние листы пользователя (в том числе «Запрос»).
+    On Error Resume Next
+    Set wsSummary = ThisWorkbook.Worksheets(SH_SUM)
+    On Error GoTo 0
+    If Not wsSummary Is Nothing Then
+        For r = 2 To LastUsedRow(wsSummary)
+            For c = 27 To 28  ' AA/AB: лист данных и графика
+                If Not IsError(wsSummary.Cells(r, c).Value) Then
+                    nm = Trim$(CStr(wsSummary.Cells(r, c).Value))
+                    If Len(nm) > 0 And nm <> SH_RAW And nm <> SH_CFG _
+                       And nm <> SH_SUM And nm <> SH_LOG And nm <> SH_INSTR Then
+                        Set ws = Nothing
+                        On Error Resume Next
+                        Set ws = ThisWorkbook.Worksheets(nm)
+                        If Not ws Is Nothing Then names.Add ws.Name, ws.Name
+                        On Error GoTo 0
+                    End If
+                End If
+            Next c
+        Next r
+    End If
+    Set ws = Nothing
+    On Error Resume Next
+    Set ws = ThisWorkbook.Worksheets(SH_PROT)
+    If Not ws Is Nothing Then names.Add ws.Name, ws.Name
+    On Error GoTo 0
 End Sub
 
 ' Краткая инструкция на отдельном листе (не удаляется при AnalyzeOPRCH / ClearOPRCHResults)
@@ -4647,11 +4675,20 @@ EH:
 End Sub
 
 Public Sub InitOPRCHUISilent()
-    On Error Resume Next
+    Dim previousQuiet As Boolean, errorInfo As String
+    previousQuiet = gOPRCHQuiet
     gOPRCHQuiet = True
+    On Error GoTo InitFail
     WriteInstructionSheet
     EnsureControlButtons EnsureSheet(SH_CFG)
     EnsureControlButtons EnsureSheet(SH_INSTR)
+    gOPRCHQuiet = previousQuiet
+    Exit Sub
+InitFail:
+    errorInfo = "Ошибка инициализации UI #" & CStr(Err.Number) & ": " & Err.Description
+    On Error Resume Next
+    AppendLog "ERROR", "InitOPRCHUISilent", errorInfo
+    gOPRCHQuiet = previousQuiet
 End Sub
 
 ' Единая точка диалогов: в тихом режиме ничего не показывает.
@@ -4665,13 +4702,20 @@ End Sub
 
 Private Sub DeleteOutputSheets(ByVal names As Collection)
     Dim i As Long
+    Dim alertsBefore As Boolean, failureText As String
+    alertsBefore = Application.DisplayAlerts
     Application.DisplayAlerts = False
+    On Error GoTo CleanFail
     For i = names.Count To 1 Step -1
-        On Error Resume Next
         ThisWorkbook.Worksheets(CStr(names(i))).Delete
-        On Error GoTo 0
     Next i
-    Application.DisplayAlerts = True
+    Application.DisplayAlerts = alertsBefore
+    Exit Sub
+CleanFail:
+    failureText = Err.Description
+    Application.DisplayAlerts = alertsBefore
+    Err.Raise vbObjectError + 2130, "DeleteOutputSheets", _
+        "Не удалось удалить старый выходной лист: " & failureText
 End Sub
 
 Private Function StationMatch(ByVal a As String, ByVal b As String) As Boolean

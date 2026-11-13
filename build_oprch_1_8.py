@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 import shutil
 import subprocess
+import tempfile
 import zipfile
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -14,7 +15,7 @@ from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font, PatternFill, Border, Side
 from openpyxl.utils import get_column_letter
 
-ROOT = Path("/Users/asavinov/ОПРЧ/ОПРЧ")
+ROOT = Path(__file__).resolve().parent
 MASTER = ROOT / "OPRCH_Monitor_all.bas"
 
 MONITOR_PROCS = {
@@ -384,7 +385,7 @@ def build_xlsm_with_macros(xlsx: Path, modules: dict[str, str] | None = None) ->
     from pyopenvba import ExcelFile
 
     xlsm = ROOT / "Шаблон_мониторинг_ОПРЧ.xlsm"
-    shell = Path("/tmp/oprch_vba_shell.xlsm")
+    shell = Path(tempfile.gettempdir()) / "oprch_vba_shell.xlsm"
     if shell.exists():
         shell.unlink()
     if xlsm.exists():
