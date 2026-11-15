@@ -22,21 +22,25 @@ Public Sub InstallOPRCHMacros()
     folder = folder & Application.PathSeparator
 
     files = Array( _
-        "OPRCH_Common_win1251.bas", _
-        "OPRCH_Engine_win1251.bas", _
-        "OPRCH_Station_win1251.bas", _
-        "OPRCH_Sheets_win1251.bas", _
-        "OPRCH_Charts_win1251.bas", _
-        "OPRCH_Monitor_win1251.bas" _
+        "OPRCH_Common", _
+        "OPRCH_Engine", _
+        "OPRCH_Station", _
+        "OPRCH_Sheets", _
+        "OPRCH_Charts", _
+        "OPRCH_Monitor" _
     )
 
+    Dim resolved() As String
+    ReDim resolved(LBound(files) To UBound(files))
     For i = LBound(files) To UBound(files)
-        f = folder & CStr(files(i))
-        If Dir(f) = "" Then
-            MsgBox "Не найден файл:" & vbCrLf & f & vbCrLf & vbCrLf & _
-                   "Положите книгу в ту же папку, где лежат шесть *_win1251.bas.", vbCritical
+        f = ResolveOPRCHBas(folder, CStr(files(i)))
+        If Len(f) = 0 Then
+            MsgBox "Не найден модуль " & CStr(files(i)) & vbCrLf & vbCrLf & _
+                   "Положите шесть файлов OPRCH_*.bas рядом с книгой" & vbCrLf & _
+                   "или в подпапку макросы_для_импорта.", vbCritical
             Exit Sub
         End If
+        resolved(i) = f
     Next i
 
     For j = wb.VBProject.VBComponents.Count To 1 Step -1
@@ -47,7 +51,7 @@ Public Sub InstallOPRCHMacros()
     Next j
 
     For i = LBound(files) To UBound(files)
-        wb.VBProject.VBComponents.Import folder & CStr(files(i))
+        wb.VBProject.VBComponents.Import resolved(i)
     Next i
 
     On Error Resume Next
@@ -70,3 +74,23 @@ EH:
     MsgBox "Ошибка установки: " & Err.Description & vbCrLf & vbCrLf & _
            "Проверьте: Параметры макросов -> «Доверить доступ к объектной модели проектов VBA».", vbCritical
 End Sub
+
+Private Function ResolveOPRCHBas(ByVal folder As String, ByVal baseName As String) As String
+    Dim dirs As Variant, names As Variant
+    Dim d As Variant, n As Variant, f As String
+    dirs = Array( _
+        folder, _
+        folder & "макросы_для_импорта" & Application.PathSeparator _
+    )
+    names = Array(baseName & "_win1251.bas", baseName & ".bas")
+    For Each d In dirs
+        For Each n In names
+            f = CStr(d) & CStr(n)
+            If Len(Dir(f)) > 0 Then
+                ResolveOPRCHBas = f
+                Exit Function
+            End If
+        Next n
+    Next d
+    ResolveOPRCHBas = ""
+End Function

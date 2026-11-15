@@ -429,7 +429,7 @@ Public Sub AddMarkerSeries(ByVal ch As Chart, ByVal ws As Worksheet, ByVal r1 As
     On Error Resume Next
     s.ChartType = xlLine
     s.Format.Line.Weight = 1.25
-    s.Format.Line.DashStyle = msoLineDash
+    s.Format.Line.DashStyle = 4  ' msoLineDash, без ссылки на Office Object Library
     s.MarkerStyle = xlMarkerStyleNone
     On Error GoTo 0
 End Sub
@@ -444,7 +444,7 @@ Public Sub AddLimitLineSeries(ByVal ch As Chart, ByVal ws As Worksheet, ByVal r1
     On Error Resume Next
     s.ChartType = xlLine
     s.Format.Line.Weight = 1.75
-    s.Format.Line.DashStyle = msoLineLongDash
+    s.Format.Line.DashStyle = 7  ' msoLineLongDash, без ссылки на Office Object Library
     s.Format.Line.ForeColor.RGB = RGB(192, 0, 0)
     s.MarkerStyle = xlMarkerStyleNone
     On Error GoTo 0

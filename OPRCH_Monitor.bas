@@ -458,7 +458,7 @@ Public Sub AddOrReplaceButton(ByVal ws As Worksheet, ByVal nm As String, ByVal a
     On Error Resume Next
     ws.Shapes(nm).Delete
     Err.Clear
-    Set shp = ws.Shapes.AddShape(msoShapeRoundedRectangle, anchor.Left, anchor.Top, w, h)
+    Set shp = ws.Shapes.AddShape(5, anchor.Left, anchor.Top, w, h)  ' 5 = msoShapeRoundedRectangle
     If shp Is Nothing Then
         ' запасной вариант: кнопка формы (стабильнее на части сборок Excel)
         Dim btn As Button

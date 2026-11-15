@@ -4376,7 +4376,7 @@ Private Sub AddMarkerSeries(ByVal ch As Chart, ByVal ws As Worksheet, ByVal r1 A
     On Error Resume Next
     s.ChartType = xlLine
     s.Format.Line.Weight = 1.25
-    s.Format.Line.DashStyle = msoLineDash
+    s.Format.Line.DashStyle = 4  ' msoLineDash, без ссылки на Office Object Library
     s.MarkerStyle = xlMarkerStyleNone
     On Error GoTo 0
 End Sub
@@ -4392,7 +4392,7 @@ Private Sub AddLimitLineSeries(ByVal ch As Chart, ByVal ws As Worksheet, ByVal r
     On Error Resume Next
     s.ChartType = xlLine
     s.Format.Line.Weight = 1.75
-    s.Format.Line.DashStyle = msoLineLongDash
+    s.Format.Line.DashStyle = 7  ' msoLineLongDash, без ссылки на Office Object Library
     s.Format.Line.ForeColor.RGB = RGB(192, 0, 0)
     s.MarkerStyle = xlMarkerStyleNone
     On Error GoTo 0
@@ -4874,7 +4874,7 @@ Public Sub AddOrReplaceButton(ByVal ws As Worksheet, ByVal nm As String, ByVal a
     On Error Resume Next
     ws.Shapes(nm).Delete
     Err.Clear
-    Set shp = ws.Shapes.AddShape(msoShapeRoundedRectangle, anchor.Left, anchor.Top, w, h)
+    Set shp = ws.Shapes.AddShape(5, anchor.Left, anchor.Top, w, h)  ' 5 = msoShapeRoundedRectangle
     If shp Is Nothing Then
         ' запасной вариант: кнопка формы (стабильнее на части сборок Excel)
         Dim btn As Button

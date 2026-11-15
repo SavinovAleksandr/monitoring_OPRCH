@@ -380,6 +380,77 @@ def rebuild_xlsx(rows: list[dict]) -> Path:
     return out
 
 
+def normalize_ooxml(path: Path) -> None:
+    """Сделать пакет совместимым с Excel Windows.
+
+    openpyxl пишет абсолютные Target=\"/xl/...\". Excel Windows считает такой
+    пакет повреждённым и при восстановлении выкидывает vbaProject.bin.
+    codeName книги должен совпадать с модулем ThisWorkbook, иначе не срабатывает
+    Workbook_Open.
+    """
+    tmp = path.with_suffix(path.suffix + ".normtmp")
+    with ZipFile(path, "r") as zin, ZipFile(tmp, "w", compression=zipfile.ZIP_DEFLATED) as zout:
+        for info in zin.infolist():
+            data = zin.read(info.filename)
+            if info.filename.endswith(".rels"):
+                text = data.decode("utf-8").replace('Target="/xl/', 'Target="')
+                data = text.encode("utf-8")
+            elif info.filename == "xl/workbook.xml":
+                text = data.decode("utf-8")
+                if 'codeName="ThisWorkbook"' not in text:
+                    text = text.replace("<workbookPr/>", '<workbookPr codeName="ThisWorkbook"/>')
+                    if 'codeName="ThisWorkbook"' not in text:
+                        text = text.replace("<workbookPr ", '<workbookPr codeName="ThisWorkbook" ', 1)
+                if not text.lstrip().startswith("<?xml"):
+                    text = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\r\n' + text
+                data = text.encode("utf-8")
+            zout.writestr(info, data)
+    tmp.replace(path)
+
+
+def harden_vba_for_windows(xlsm: Path) -> None:
+    """Сделать vbaProject.bin таким, какой открывает 32-битный Excel Windows.
+
+    Сборка pyOpenVBA оставляет:
+      - PROJECTSYSKIND = 3 (64-bit) — 32-битный Excel проект не компилирует;
+      - ссылку на 64-битный MSO.DLL — «Missing library», и макросы молчат;
+      - _VBA_PROJECT версии 0x00B5 с нулевым кэшем вместо заголовка Excel 0x00AF.
+    """
+    from pyopenvba import ExcelFile
+    from pyopenvba.cfb import CFB
+
+    ef = ExcelFile(xlsm)
+    for ref in list(ef.references()):
+        label = f"{ref.name} {getattr(ref, 'libid', '')}"
+        if "OFFICE" in label.upper() or "MSO.DLL" in label.upper():
+            ef.remove_reference(ref.name)
+    proj = ef.vba_project()
+    raw = bytearray(proj.dir_raw)
+    if raw[:6] != bytes.fromhex("010004000000"):
+        raise RuntimeError(f"Неожиданное начало dir: {raw[:8].hex()}")
+    raw[6] = 1  # Win32: открывается и в 32-битном, и в 64-битном Excel
+    patched = bytes(raw).replace(b"System32", b"SysWOW64")
+    patched = patched.replace("System32".encode("utf-16-le"), "SysWOW64".encode("utf-16-le"))
+    proj.dir_raw = patched
+    proj.dir_references_dirty = True
+    ef.save()
+
+    with ZipFile(xlsm, "r") as zin:
+        vba = zin.read("xl/vbaProject.bin")
+        other = {info.filename: zin.read(info.filename) for info in zin.infolist()}
+    cfb = CFB.from_bytes(vba)
+    # Заголовок как у книги, сохранённой Excel: версия 0x00AF, Reserved3=1, кэша нет.
+    # Пустой кэш заставляет Excel заново скомпилировать исходник на этой машине.
+    cfb.write_stream("_VBA_PROJECT", bytes.fromhex("cc61af00000100"))
+    new_vba = cfb.to_bytes()
+    other["xl/vbaProject.bin"] = new_vba
+    tmp = xlsm.with_suffix(".xlsm.normtmp")
+    with ZipFile(tmp, "w", compression=zipfile.ZIP_DEFLATED) as zout:
+        for name, data in other.items():
+            zout.writestr(name, data)
+    tmp.replace(xlsm)
+
+
 def build_xlsm_with_macros(xlsx: Path, modules: dict[str, str] | None = None) -> Path:
     """Собрать готовый .xlsm: данные из xlsx + VBA через pyOpenVBA (без Excel SaveAs)."""
     from pyopenvba import ExcelFile
@@ -512,6 +583,8 @@ def build_xlsm_with_macros(xlsx: Path, modules: dict[str, str] | None = None) ->
     print("xlsm ready", xlsm, xlsm.stat().st_size, "vba", vsz, "modules", check.module_names())
     if vsz < 20000:
         raise RuntimeError("vbaProject.bin слишком мал")
+    normalize_ooxml(xlsm)
+    harden_vba_for_windows(xlsm)
     return xlsm
 
 
