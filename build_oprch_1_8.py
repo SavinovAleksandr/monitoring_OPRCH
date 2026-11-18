@@ -24,6 +24,9 @@ MONITOR_PROCS = {
     "ClearOPRCHResults", "ApplyPresetsToConfig",
     "EnsureControlButtons", "AddOrReplaceButton", "WriteInstructionSheet",
     "InitOPRCHUI", "InitOPRCHUISilent",
+    "InstrHeading", "InstrNote", "InstrField", "PdfTextHeight", "PdfColorStatus",
+    "PdfPageSetup", "PdfVerdictText", "PdfHasExportData", "PdfBuildSummary",
+    "PdfBuildProtocol", "PdfBuildCharts",
 }
 ENGINE_PROCS = {
     "AnalyzeOneGenerator", "EvaluateReaction15", "React15ThresholdMW",
